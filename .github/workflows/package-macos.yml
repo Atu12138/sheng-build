@@ -199,6 +199,15 @@ jobs:
         with:
           path: device/scripts/policies/macos-27.3-26C5035r
           key: verified-root-policies-v1-macos-27.3-26C5035r
+      - name: restore inputs cache
+        id: inputs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            device/.cache/firmware
+            device/firmware/wcn7850
+          key: sheng-inputs-v2-${{ hashFiles('device/proprietary-files.txt', 'device/board.toml') }}
+          restore-keys: sheng-inputs-v2-
       - name: board firmware and Wi-Fi inputs
         working-directory: device
         run: |
@@ -209,7 +218,7 @@ jobs:
             echo "download-sheng-firmware.py attempt $attempt failed; waiting 10s before resuming..."
             sleep 10
           done
-          python3 scripts/extract-sheng-firmware.py --delete-archive
+          python3 scripts/extract-sheng-firmware.py
           python3 - <<'PY'
           import hashlib, json, pathlib, urllib.request
           wcn = pathlib.Path('firmware/wcn7850')
@@ -309,6 +318,15 @@ jobs:
         with:
           path: device/scripts/policies/macos-27.3-26C5035r
           key: verified-root-policies-v1-macos-27.3-26C5035r
+      - name: save inputs cache
+        if: steps.inputs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            device/.cache/firmware
+            device/firmware/wcn7850
+          key: ${{ steps.inputs-cache.outputs.cache-primary-key }}
+
       - name: package
         working-directory: device
         env:
