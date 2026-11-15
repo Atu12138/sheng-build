@@ -22,9 +22,9 @@ on:
         type: boolean
         default: false
       skip_setup:
-        description: "New seed only: mark Setup Assistant done (use with the MACOS_USER secret)"
+        description: "New seed only: mark Setup Assistant done (uses MACOS_USER secret or unixnu:unixnu)"
         type: boolean
-        default: false
+        default: true
       userdata:
         description: "Also build userdata-root.img (about 16.5 GB, needed once for the first installation)"
         type: boolean
@@ -130,6 +130,11 @@ jobs:
           [ -f "$bridge_script" ] || bridge_script="../UniXNU/scripts/build-adreno-metal-bridge.py"
           if [ -f "$bridge_script" ]; then
             sed -i '' 's/timeout=1800/timeout=3600/g' "$bridge_script"
+          fi
+          payload_script="UniXNU/scripts/unixnu/payload.py"
+          [ -f "$payload_script" ] || payload_script="../UniXNU/scripts/unixnu/payload.py"
+          if [ -f "$payload_script" ]; then
+            sed -i '' 's/1024 \* 0\.95/1024 * 0.98/' "$payload_script"
           fi
       - name: platform seed
         env:
@@ -330,12 +335,30 @@ jobs:
           read -r -a seed_args <<< "$cmd"
           # sudo resets PATH; keep the runner's Python 3 (the system one is too old for the build scripts).
           seed_args[0]=$(command -v python3)
-          if [ "$SKIP_SETUP" = true ]; then seed_args+=(--skip-setup); fi
-          if [ -n "$MACOS_USER" ]; then seed_args+=(--user "$MACOS_USER"); fi
+          if [ "$SKIP_SETUP" = true ]; then
+            account="${MACOS_USER:-unixnu:unixnu}"
+            echo "::add-mask::${account#*:}"
+            seed_args+=(--skip-setup --user "$account")
+          elif [ -n "$MACOS_USER" ]; then
+            echo "::add-mask::${MACOS_USER#*:}"
+            seed_args+=(--user "$MACOS_USER")
+          fi
           echo "creating the first-install Data seed"
           sudo "${seed_args[@]}"
           sudo chown -R "$(id -u):$(id -g)" "../$WORK/runtime"
           scripts/package.sh --os "$OS_PROFILE" --uefi ../uefi-sheng --no-deps
+      - name: materialize dense images
+        run: |
+          for f in "$WORK/boot/boot.img" "$WORK/payload/payload.img" "$WORK/kernel/kernel.macho" "$WORK/runtime/data.dbr"; do
+            [ -f "$f" ] || continue
+            h1=$(shasum -a 256 "$f" | awk '{print $1}')
+            cat "$f" > "$f.dense"
+            h2=$(shasum -a 256 "$f.dense" | awk '{print $1}')
+            echo "$f: src=$h1 dense=$h2"
+            [ "$h1" = "$h2" ] || { echo "SHA256 mismatch on $f!"; exit 1; }
+            mv "$f.dense" "$f"
+          done
+          ls -lh "$WORK/boot/boot.img" "$WORK/payload/payload.img" "$WORK/kernel/kernel.macho" "$WORK/runtime/data.dbr"
       - name: diagnostic logs backup
         if: failure()
         uses: actions/upload-artifact@v4
