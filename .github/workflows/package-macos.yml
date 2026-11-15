@@ -20,7 +20,7 @@ on:
       init_data:
         description: "FIRST installation: create a new macOS Data seed when no saved seed exists"
         type: boolean
-        default: false
+        default: true
       skip_setup:
         description: "New seed only: mark Setup Assistant done (uses MACOS_USER secret or unixnu:unixnu)"
         type: boolean
@@ -30,15 +30,15 @@ on:
         type: boolean
         default: false
       boot_runner:
-        description: "Runner for the boot job (macos-15-intel avoids macOS arm64 queue contention)"
+        description: "Runner for the boot job (macos-26 has Xcode 26 and arm64 Data template)"
         type: choice
-        options: ["macos-15-intel", "macos-26", "macos-15", "macos-14", "macos-latest", "self-hosted"]
-        default: "macos-15-intel"
+        options: ["macos-26", "macos-15-intel", "macos-15", "macos-14", "macos-latest", "self-hosted"]
+        default: "macos-26"
       userdata_runner:
-        description: "Runner for the userdata job (macos-15-intel avoids macOS arm64 queue contention)"
+        description: "Runner for the userdata job (macos-26 or macos-15-intel)"
         type: choice
-        options: ["macos-15-intel", "macos-26", "macos-15", "macos-14", "macos-latest", "self-hosted"]
-        default: "macos-15-intel"
+        options: ["macos-26", "macos-15-intel", "macos-15", "macos-14", "macos-latest", "self-hosted"]
+        default: "macos-26"
       data_seed_url:
         description: "Optional original data.dbr URL for an existing installation; otherwise use the saved cache"
         type: string
@@ -134,7 +134,7 @@ jobs:
           payload_script="UniXNU/scripts/unixnu/payload.py"
           [ -f "$payload_script" ] || payload_script="../UniXNU/scripts/unixnu/payload.py"
           if [ -f "$payload_script" ]; then
-            sed -i '' 's/1024 \* 0\.95/1024 * 0.98/' "$payload_script"
+            sed -i '' 's/1024 \* 0\.95/1024 * 0.99/' "$payload_script"
           fi
       - name: platform seed
         env:
@@ -152,12 +152,14 @@ jobs:
           python3 - <<'PY'
           import hashlib, os
           h = hashlib.sha256(os.environ['SEED'].encode()).hexdigest()[:16]
+          rid = os.environ['GITHUB_RUN_ID']
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f'key=data-seed-v2-{h}-macos27\n')
-              out.write(f'restore=data-seed-v1-{h}-macos27\n')
+              out.write(f'key=data-seed-v3-{h}-macos27-{rid}\n')
+              out.write(f'restore=data-seed-v3-{h}-macos27-\n')
           PY
       - uses: actions/cache/restore@v4
         id: data-cache
+        if: ${{ !inputs.init_data }}
         with:
           path: |
             ${{ env.WORK }}/runtime/data.dbr
@@ -186,6 +188,9 @@ jobs:
                   raise SystemExit('Saved seed differs; preserve and inspect it instead of replacing this installation')
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_bytes(data)
+          elif os.environ['INIT_DATA'] == 'true':
+              path.unlink(missing_ok=True)
+              (path.parent / 'inputs.json').unlink(missing_ok=True)
           if not path.is_file() and os.environ['INIT_DATA'] != 'true':
               raise SystemExit('No saved seed. Supply the ORIGINAL seed for an existing installation, or select init_data for a FIRST installation')
           PY
