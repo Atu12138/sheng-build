@@ -51,6 +51,39 @@ jobs:
           repository: UniXNU/uefi-sheng
           path: uefi-sheng
           submodules: recursive
+      - name: pin the sheng SoC sources required by Bluetooth
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("device/feeds.toml")
+          text = path.read_text()
+          old = 'commit = "a9f45dc60c035084b95463781538380f4c3606c9"'
+          new = 'commit = "2dc650ca76ae38715cd0712e60a44b14fe251745"'
+          if old in text:
+              path.write_text(text.replace(old, new, 1), newline="\n")
+          elif new not in text:
+              raise SystemExit("unexpected SM8550 source pin")
+          PY
+      - name: cache Ath12kWifi sources
+        uses: actions/cache@v4
+        with:
+          path: device/drivers/Ath12kWifi/deps
+          key: ath12k-sources-${{ hashFiles('device/drivers/Ath12kWifi/tools/source-lock.json') }}
+      - name: repair Ath12kWifi sparse checkout paths
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("device/drivers/Ath12kWifi/tools/fetch-sources.py")
+          text = path.read_text()
+          old = 'subprocess.run(["git", "-C", str(directory), "sparse-checkout", "add", *source["paths"]], check=True)'
+          new = 'subprocess.run(["git", "-C", str(directory), "sparse-checkout", "add", "--skip-checks", *paths], check=True)'
+          if old in text:
+              path.write_text(text.replace(old, new, 1), newline="\n")
+          else:
+              print("sparse-checkout repair: no change needed")
+          PY
+      - name: fetch Ath12kWifi sources
+        run: device/drivers/Ath12kWifi/tools/fetch-sources.sh
       - name: tools
         run: |
           brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
