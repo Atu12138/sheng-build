@@ -44,6 +44,8 @@ jobs:
       - name: Check out device sources
         uses: actions/checkout@v4
         with:
+          repository: UniXNU/UniXNU-sheng
+          ref: 6a99956461d3808e36ba2047e18cf6083a6dcb82
           path: device
           submodules: recursive
       - name: Check out core sources
