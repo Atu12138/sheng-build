@@ -231,3 +231,19 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/xnu-work
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/fakeroot
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/xnu
+
+      - name: Export UEFI diagnostic symbols
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheng-uefi-diagnostic-symbols
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            uefi-sheng/Build/**/*.efi
+            uefi-sheng/Build/**/*.pdb
+            uefi-sheng/Build/**/*.map
+            uefi-sheng/Build/**/*.fd
+            UniXNU/out/sheng/macos-*/**/boot/boot.json
+            UniXNU/out/sheng/macos-*/**/package.manifest.json
+            UniXNU/out/sheng/macos-*/**/logs/*.log
