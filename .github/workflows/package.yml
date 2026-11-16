@@ -84,6 +84,52 @@ jobs:
           PY
       - name: fetch Ath12kWifi sources
         run: device/drivers/Ath12kWifi/tools/fetch-sources.sh
+      - name: restore inputs cache
+        id: inputs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            device/.cache/firmware
+            device/firmware/wcn7850
+          key: sheng-inputs-v2-${{ hashFiles('device/proprietary-files.txt', 'device/board.toml') }}
+          restore-keys: sheng-inputs-v2-
+      - name: stage sheng firmware
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          wcn = pathlib.Path('device/firmware/wcn7850')
+          wcn.mkdir(parents=True, exist_ok=True)
+          base = 'https://raw.githubusercontent.com/ianchb/sheng-firmware/ebdd6f89ee5aaa132f03860c211bdfb4294bd954/ath12k/WCN7850/hw2.0/'
+          expected = {
+              'amss.bin': '43aadfd3df887f27de74020273aee484bac6a31dd53068f91baf2a9b094d6a68',
+              'm3.bin': '0e72f44df7defc269fe92dcea25d4d409046c04b77d41c510c52879b3dfc1055',
+              'board-2.bin': '6a98237c743d864773a547e81e23f0c6dc721dcd7331926bee7381e2152e00fd',
+          }
+          for name, digest in expected.items():
+              target = wcn / name
+              if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == digest:
+                  print(f'{name}: cached')
+                  continue
+              with urllib.request.urlopen(base + name, timeout=120) as resp:
+                  data = resp.read()
+              actual = hashlib.sha256(data).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f'firmware SHA-256 mismatch: {name}: {actual}')
+              target.write_bytes(data)
+              print(f'{name}: {actual} (downloaded)')
+          PY
+      - name: stage proprietary firmware
+        working-directory: device
+        run: python3 scripts/extract-files.py
+
+      - name: save inputs cache
+        if: steps.inputs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            device/.cache/firmware
+            device/firmware/wcn7850
+          key: ${{ steps.inputs-cache.outputs.cache-primary-key }}
       - name: tools
         run: |
           brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
