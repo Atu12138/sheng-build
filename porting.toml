@@ -22,6 +22,11 @@ next_action = ["Compare the effective status output whenever a profile, source o
 [[area.evidence]]
 kind = "source"
 reference = "board.toml"
+result = "Diagnostic branch restores the board configuration of official device commit 6a99956461d3808e36ba2047e18cf6083a6dcb82 and core a59e7622051c14ad8768a96c8baef2b51114829c recorded in its artifact. The preceding CI stopped during configuration because the macOS target inherited os:configs/ipados.config. No hardware success is claimed."
+
+[[area.evidence]]
+kind = "source"
+reference = "board.toml"
 result = "Implementation and configuration described in this section"
 
 
