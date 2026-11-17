@@ -1,4 +1,4 @@
-name: sheng memory handoff diagnostic
+name: sheng guarded memory handoff
 
 on:
   workflow_dispatch:
@@ -68,7 +68,7 @@ jobs:
           repository: Atu12138/sheng-build
           ref: diagnose-uefi-abort-20261117
           path: diagnostic-harness
-          sparse-checkout: scripts/diagnose-sheng-memory.py
+          sparse-checkout: scripts/guard-sheng-memory.py
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
@@ -158,30 +158,35 @@ jobs:
           else
             python3 ../device/scripts/prepare-macos-install.py --reuse-policies
           fi
-      - name: Instrument pre-handoff memory map
+      - name: Apply conservative board memory guard
         run: |
-          python3 diagnostic-harness/scripts/diagnose-sheng-memory.py UniXNU/drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.c
-          printf '\n# Diagnostic build: stops before ExitBootServices to display the map near 0x8B9D00000. No hardware result yet.\n' >> device/porting.toml
-      - name: Preserve diagnostic source
+          python3 diagnostic-harness/scripts/guard-sheng-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
+          printf '\n# Diagnostic hardware evidence: ELR matches DarwinFlush DC CIVAC, FAR 0x8B9D00000. UEFI map type7 covers this address. Guard low-bank end at this address; no successful boot result yet.\n' >> device/porting.toml
+      - name: Preserve memory guard source
         uses: actions/upload-artifact@v4
         with:
-          name: memory-diagnostic-source
+          name: memory-guard-source
           path: |
-            UniXNU/drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.c
-            diagnostic-harness/scripts/diagnose-sheng-memory.py
+            uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
+            diagnostic-harness/scripts/guard-sheng-memory.py
+            device/porting.toml
           retention-days: 7
       - name: Build images
         working-directory: device
         run: scripts/package.sh --os macos-27 --uefi ../uefi-sheng
-      - name: Verify diagnostic firmware marker
+      - name: Verify guarded memory descriptor and original loader
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          candidates = list(Path('uefi-sheng/Build').rglob('DarwinBoot.efi'))
-          marker = b'SHENG MEMORY MAP DIAGNOSTIC - NO KERNEL START'
-          assert candidates, 'No DarwinBoot EFI output'
-          assert all(marker in path.read_bytes() for path in candidates), 'Diagnostic marker missing from final EFI'
-          print('Diagnostic marker verified in', len(candidates), 'DarwinBoot outputs')
+          import struct
+          root = Path('uefi-sheng/Build')
+          files = [p for p in root.rglob('*') if p.suffix.lower() in ('.efi', '.dll')]
+          needle = struct.pack('<QQ', 0x880000000, 0x39D00000)
+          matches = [str(p) for p in files if needle in p.read_bytes()]
+          assert matches, 'Guarded low-bank descriptor absent from firmware build'
+          loaders = list(root.rglob('DarwinBoot.efi'))
+          assert loaders and all(b'SHENG MEMORY MAP DIAGNOSTIC - NO KERNEL START' not in p.read_bytes() for p in loaders), 'Diagnostic stop unexpectedly retained'
+          print('Guarded descriptor verified:', ', '.join(matches))
           PY
       - name: Publish shader inventory
         if: always()
