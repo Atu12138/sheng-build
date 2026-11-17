@@ -1,4 +1,4 @@
-name: sheng macOS lab
+name: sheng memory handoff diagnostic
 
 on:
   workflow_dispatch:
@@ -62,6 +62,14 @@ jobs:
           ref: 8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be
           path: uefi-sheng
           submodules: false
+      - name: Check out diagnostic harness
+        uses: actions/checkout@v4
+        with:
+          repository: Atu12138/sheng-build
+          ref: diagnose-uefi-abort-20261117
+          path: diagnostic-harness
+          sparse-checkout: scripts/diagnose-sheng-memory.py
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -150,9 +158,31 @@ jobs:
           else
             python3 ../device/scripts/prepare-macos-install.py --reuse-policies
           fi
+      - name: Instrument pre-handoff memory map
+        run: |
+          python3 diagnostic-harness/scripts/diagnose-sheng-memory.py UniXNU/drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.c
+          printf '\n# Diagnostic build: stops before ExitBootServices to display the map near 0x8B9D00000. No hardware result yet.\n' >> device/porting.toml
+      - name: Preserve diagnostic source
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-diagnostic-source
+          path: |
+            UniXNU/drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.c
+            diagnostic-harness/scripts/diagnose-sheng-memory.py
+          retention-days: 7
       - name: Build images
         working-directory: device
         run: scripts/package.sh --os macos-27 --uefi ../uefi-sheng
+      - name: Verify diagnostic firmware marker
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          candidates = list(Path('uefi-sheng/Build').rglob('DarwinBoot.efi'))
+          marker = b'SHENG MEMORY MAP DIAGNOSTIC - NO KERNEL START'
+          assert candidates, 'No DarwinBoot EFI output'
+          assert all(marker in path.read_bytes() for path in candidates), 'Diagnostic marker missing from final EFI'
+          print('Diagnostic marker verified in', len(candidates), 'DarwinBoot outputs')
+          PY
       - name: Publish shader inventory
         if: always()
         uses: actions/upload-artifact@v4
