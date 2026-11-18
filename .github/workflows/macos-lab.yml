@@ -182,6 +182,35 @@ jobs:
         run: |
           python3 diagnostic-harness/scripts/guard-sheng-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
           printf '\n# Local tablet evidence: preserve low-bank end 0x8B9D00000; previous guarded build reached the macOS desktop. Upgrade has not yet been hardware tested.\n' >> device/porting.toml
+      - name: Select locked Wi-Fi source revisions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          root = Path('device/drivers/Ath12kWifi')
+          lock = json.loads((root / 'tools/source-lock.json').read_text())
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              directory = root / 'deps' / name
+              directory.parent.mkdir(parents=True, exist_ok=True)
+              if not directory.exists():
+                  directory.mkdir()
+                  git(directory, 'init')
+                  git(directory, 'remote', 'add', 'origin', source['url'])
+                  git(directory, 'sparse-checkout', 'init', '--cone')
+              else:
+                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *source['paths']).splitlines()
+                  changes = [path for path in changes if not path.startswith('include/uapi/linux/netfilter')]
+                  if changes:
+                      raise SystemExit(name + ': refusing to replace modified imported sources')
+              git(directory, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', source['commit'])
+              git(directory, 'checkout', '--detach', source['commit'])
+              git(directory, 'sparse-checkout', 'add', '--skip-checks', *source['paths'])
+              assert git(directory, 'rev-parse', 'HEAD') == source['commit']
+              print(name + ': selected source-lock commit ' + source['commit'])
+          PY
       - name: Prepare installation
         working-directory: UniXNU
         run: |
