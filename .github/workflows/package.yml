@@ -166,6 +166,16 @@ jobs:
           assert hashlib.sha256(fixed).hexdigest() == 'c8928a961118064fc34388e8fc78396799acdc0d4c3cc47921a36bc89988d10b'
           path.write_bytes(fixed)
           PY
+      - name: Scope sleep diagnostics to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, subprocess
+          path = Path('device/package/ShengSleep.cpp')
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == 'bc6bdedc360cf1acb82b30d5c28cb809bb58d92eeedc66d67dcbeda68cb23547'
+          subprocess.run(['git', 'apply', '-'], input=base64.b64decode('LS0tIGEvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKKysrIGIvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKQEAgLTU0LDcgKzU0LDkgQEAKIAogbmFtZXNwYWNlIHsKIGNvbnN0ZXhwciB1aW50MzJfdCBrSW8gPSAweDQsIGtJbnRyQ2ZnID0gMHg4LCBrSW50clN0YXR1cyA9IDB4YzsKKyNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogY29uc3RleHByIElPT3B0aW9uQml0cyBrV2FrZUV2ZW50U291cmNlID0gMHgxOyAgIC8vIGtJT1BNV2FrZUV2ZW50U291cmNlIChJT1BNUHJpdmF0ZS5oKQorI2VuZGlmCiAKIElPTWVtb3J5TWFwICpnVGxtbU1hcDsKIHVpbnRwdHJfdCBnVGxtbTsKQEAgLTExNCw2ICsxMTYsNyBAQAogCiBjb25zdCBhcm1jcHVfc2xlZXBfYm9hcmQgZ0JvYXJkID0ge3ByZXBhcmUsIHNob3VsZFdha2UsIHJlc3RvcmUsIGtXYWtlU3Bpcywgc2l6ZW9mIGtXYWtlU3BpcyAvIHNpemVvZiBrV2FrZVNwaXNbMF0sIHRpY2ssIDEwfTsKIAorI2lmIGRlZmluZWQoWE5VX1RBUkdFVF9PU19PU1gpICYmIFhOVV9UQVJHRVRfT1NfT1NYCiAvLyBUaGUgd2FrZSBzb3VyY2VzIGEgc2xlZXAgY2FuIGNvdW50IG9uOiB0aGUga2V5Ym9hcmQgcHJvYmUgcGFzdCBpdHMgaW50ZXJydXB0IHN0ZXAgKHN0YWdlIDUgYW5kIG9uKSBob2xkcyB0aGUgVExNTSBzdW1tYXJ5LCB0aGUKIC8vIGJ1dHRvbnMgYXJtZWQgKHN0YWdlIDMpIGhvbGQgdGhlIFNQTUkgbGluZS4KIGJvb2wgbGlkQXJtZWQoKSB7cmV0dXJuICZuYXRpdmVfa2V5Ym9hcmRfc3RhdHMgJiYgbmF0aXZlX2tleWJvYXJkX3N0YXRzWzBdID49IDU7fQpAQCAtMTI0LDcgKzEyNyw2IEBACiAgICAgcmV0dXJuIGh6ID8gdGlja3MgLyAoaHogLyAxMDAwKSA6IDA7CiB9CiAKLSNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogSU9SZXR1cm4gc2xlZXBXYWtlKHZvaWQgKiwgdm9pZCAqLCBuYXR1cmFsX3QgbWVzc2FnZSwgSU9TZXJ2aWNlICosIHZvaWQgKiwgdm1fc2l6ZV90KSB7CiAgICAgSU9QTXJvb3REb21haW4gKnJvb3QgPSBJT1NlcnZpY2U6OmdldFBNUm9vdERvbWFpbigpOwogICAgIHN3aXRjaCAobWVzc2FnZSkgewo='), check=True)
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == '45ae20e250cbc9ba553fa525e01669fdca23968e0c31c663c685668bdf7c815d'
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
