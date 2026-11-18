@@ -183,6 +183,7 @@ jobs:
               return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
           for name in ('linux', 'freebsd'):
               source = lock[name]
+              paths = [value.strip('/') for value in source['paths']]
               directory = root / 'deps' / name
               directory.parent.mkdir(parents=True, exist_ok=True)
               if not directory.exists():
@@ -191,13 +192,13 @@ jobs:
                   git(directory, 'remote', 'add', 'origin', source['url'])
                   git(directory, 'sparse-checkout', 'init', '--cone')
               else:
-                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *source['paths']).splitlines()
+                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *paths).splitlines()
                   changes = [path for path in changes if not path.startswith('include/uapi/linux/netfilter')]
                   if changes:
                       raise SystemExit(name + ': refusing to replace modified imported sources')
               git(directory, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', source['commit'])
               git(directory, 'checkout', '--detach', source['commit'])
-              git(directory, 'sparse-checkout', 'add', '--skip-checks', *source['paths'])
+              git(directory, 'sparse-checkout', 'add', '--skip-checks', *paths)
               assert git(directory, 'rev-parse', 'HEAD') == source['commit']
               print(name + ': selected source-lock commit ' + source['commit'])
           PY
