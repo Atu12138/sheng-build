@@ -121,6 +121,20 @@ jobs:
           assert hashlib.sha256(fixed).hexdigest() == 'cd15bbb8f932d564a99300e63d3d6c5a6a714b311596e80619092c5d3fa5e25a'
           patch.write_bytes(fixed)
           PY
+      - name: Use upstream APFS seed resize fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, urllib.request
+          script = Path('UniXNU/scripts/seed-data-grow.py')
+          assert hashlib.sha256(script.read_bytes()).hexdigest() == '507bce30053936608ebf4d5b7de75397d7e544934a9949a071a244cc0a3c810c'
+          url = 'https://raw.githubusercontent.com/UniXNU/UniXNU/bba3b57879e94e5ec1632daafb74cbcab8af49a5/scripts/seed-data-grow.py'
+          with urllib.request.urlopen(url, timeout=30) as response:
+              fixed = response.read()
+          assert hashlib.sha256(fixed).hexdigest() == 'f9caab5325a6146a18e1d2913e1f16c248ec601a07a2621ac2d51e1473526916'
+          compile(fixed, str(script), 'exec')
+          script.write_bytes(fixed)
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
