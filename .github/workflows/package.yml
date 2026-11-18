@@ -136,6 +136,22 @@ jobs:
           assert hashlib.sha256(patch.read_bytes()).hexdigest() == '8de0a88adb005b92ec6f52846fc13d6776b97c99f348688c17c3db75ee7877f3'
           patch.write_bytes(base64.b64decode('ZGlmZiAtLWdpdCBhL2JzZC9rZXJuL2tlcm5fZXhlYy5jIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKLS0tIGEvYnNkL2tlcm4va2Vybl9leGVjLmMKKysrIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKQEAgLTkzNDksNiArOTM0OSw4IEBACiAjaWYgZGVmaW5lZChYTlVfT1dORVJfREFUQV9NT1VOVCkgJiYgWE5VX09XTkVSX0RBVEFfTU9VTlQKIAlib290X3Byb2dyZXNzX3N0YWdlKCJEYXRhIG1vdW50IGVudGVyIik7CiAJaW50IGRhdGFfZXJyb3IgPSBuYXRpdmVfb3duZXJfZGF0YV9wcmVwYXJlKHAsICh1c2VyX2FkZHJfdClzY3JhdGNoX2FkZHIpOworCWV4dGVybiB2b2lkIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KGNvbnN0IGNoYXIgKiwgaW50KSBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOworCWlmICgmYm9vdF9sb2dfc3RhcnR1cF9yZXN1bHQpIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KCJEYXRhIG1vdW50IHJldHVybmVkIiwgZGF0YV9lcnJvcik7CiAJYm9vdF9wcm9ncmVzc19zdGFnZSgiRGF0YSBtb3VudCByZXR1cm5lZCIpOwogCWlmIChkYXRhX2Vycm9yKSBwYW5pYygib2ZmbGluZSBzY3JhdGNoIERhdGEgbW91bnQgZmFpbGVkOiAlZCIsIGRhdGFfZXJyb3IpOwogI2lmIGRlZmluZWQoWE5VX0JPT1RfUFJPR1JFU1MpICYmIFhOVV9CT09UX1BST0dSRVNTCkBAIC05MzYxLDE0ICs5MzYzLDE4IEBACiAJLyogV2l0aG91dCBCb290UHJvZ3Jlc3MgKGlQYWRPUyAyNyk6IHRoZSBzYW1lIGxhdW5jaGQgam9iIHBvbGljeSwgZnJvbSB0aGUgc291cmNlIHN0b3JhZ2UgYXJjaGl2ZS4gKi8KIAlleHRlcm4gaW50IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHZvaWQgKiwgdWludDY0X3QpIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CiAJaWYgKHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KSB7CisJCWJvb3RfcHJvZ3Jlc3Nfc3RhZ2UoImxhdW5jaCBwb2xpY3kgZW50ZXIiKTsKIAkJaW50IHBvbGljeV9lcnJvciA9IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHAsICh1aW50NjRfdClzY3JhdGNoX2FkZHIpOworCQlpZiAoJmJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KSBib290X2xvZ19zdGFydHVwX3Jlc3VsdCgibGF1bmNoIHBvbGljeSByZXR1cm5lZCIsIHBvbGljeV9lcnJvcik7CiAJCS8qIEEgZnVsbCBvciB1bndyaXRhYmxlIERhdGEgdm9sdW1lIChFTk9TUEMpIG9ubHkgbG9zZXMgdGhlIGpvYiBwb2xpY3k6IGJvb3Qgb24gaW5zdGVhZCBvZiBhIHBhbmljLiAqLwogCQlpZiAocG9saWN5X2Vycm9yKSBwcmludGYoInNoZW5nIHdhdGNoZG9nIGxhdW5jaCBwb2xpY3kgZmFpbGVkOiAlZCAoY29udGludWluZylcbiIsIHBvbGljeV9lcnJvcik7CiAJfQogI2VuZGlmCiAjZW5kaWYKICNpZiBDT05GSUdfTUVNT1JZU1RBVFVTCisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCBlbnRlciIpOwogCSh2b2lkKSBtZW1vcnlzdGF0dXNfaW5pdF9hdF9ib290X3NuYXBzaG90KCk7CisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCByZXR1cm5lZCIpOwogI2VuZGlmIC8qIENPTkZJR19NRU1PUllTVEFUVVMgKi8KIAogI2lmIChERUJVRyB8fCBERVZFTE9QTUVOVCkgJiYgZGVmaW5lZChYTlVfTkFUSVZFX0FJUl9JTklUKSAmJiBYTlVfTkFUSVZFX0FJUl9JTklUCmRpZmYgLS1naXQgYS9vc2Ztay9rZXJuL2RlYnVnLmMgYi9vc2Ztay9rZXJuL2RlYnVnLmMKLS0tIGEvb3NmbWsva2Vybi9kZWJ1Zy5jCisrKyBiL29zZm1rL2tlcm4vZGVidWcuYwpAQCAtMTI1Miw2ICsxMjUyLDkgQEAKICAgICB1aW50NjRfdCBwYW5pY19vcHRpb25zX21hc2ssIHZvaWQgKnBhbmljX2RhdGFfcHRyLCB1bnNpZ25lZCBsb25nIHBhbmljX2NhbGxlciwgY29uc3QgY2hhciAqcGFuaWNfaW5pdGlhdG9yKQogewogI3ByYWdtYSBjbGFuZyBkaWFnbm9zdGljIHBvcAorCWV4dGVybiB2b2lkIGJvb3RfbG9nX3BhbmljX3JlY29yZChjb25zdCBjaGFyICosIHZhX2xpc3QgKiwgdW5zaWduZWQgbG9uZykgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKKwlpZiAoJmJvb3RfbG9nX3BhbmljX3JlY29yZCkgYm9vdF9sb2dfcGFuaWNfcmVjb3JkKHBhbmljX2Zvcm1hdF9zdHIsIHBhbmljX2FyZ3MsIHBhbmljX2NhbGxlcik7CisKIAogI2lmIGRlZmluZWQoX194ODZfNjRfXykgJiYgKERFVkVMT1BNRU5UIHx8IERFQlVHKQogCXJlYWRfbGJyKCk7Cg=='))
           PY
+      - name: Select the touch SPI component
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          path = Path('device/board.toml')
+          text = path.read_text()
+          first = text.index('["components"]')
+          last = text.index('\n\n', first)
+          section = text[first:last]
+          assert tomllib.loads(section)['components']['include'].count('ShengUfs') == 1
+          assert 'QcomGeniSpi' not in section
+          fixed = text[:first] + section.replace('"ShengUfs"', '"ShengUfs", "QcomGeniSpi"', 1) + text[last:]
+          assert 'QcomGeniSpi' in tomllib.loads(fixed)['components']['include']
+          path.write_text(fixed)
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
