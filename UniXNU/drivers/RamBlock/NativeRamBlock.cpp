@@ -1,0 +1,281 @@
+name: sheng iPadOS 27 build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      UNIXNU_IPSW_JOBS: 16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU-sheng
+          ref: 6c42e1055ffb3b335fda991190ad221edaa7af3c
+          path: device
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: bba3b57879e94e5ec1632daafb74cbcab8af49a5
+          path: UniXNU
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          ref: b303410c8e401fc9419ae65a024356ed09a438ef
+          path: uefi-sheng
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: tools
+        run: |
+          brew install dtc llvm lld llvm@22 lld@22 openssl@3 unifdef cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          {
+            echo "$HOME/.cargo/bin"
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+          } >> "$GITHUB_PATH"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          toolchain = Path('uefi-toolchain').resolve()
+          toolchain.mkdir()
+          for name in ('clang', 'llvm-lib', 'llvm-rc', 'lld-link'):
+              package = 'lld@22' if name == 'lld-link' else 'llvm@22'
+              (toolchain / name).symlink_to(Path('/opt/homebrew/opt') / package / 'bin' / name)
+          with Path(__import__('os').environ['GITHUB_ENV']).open('a') as output:
+              output.write('CLANG_BIN=' + str(toolchain) + '/\n')
+          PYTHON
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          # Fail fast, naming the tool, before forty minutes of build.
+          ok=1
+          for t in clang xcodebuild make git ninja cmake dtc fdtget fdtput aea compression_tool \
+                   mformat mcopy ipsw; do
+            command -v "$t" >/dev/null || { echo "missing tool: $t"; ok=0; }
+          done
+          for t in lld-link llvm-lib llvm-rc llvm-nm llvm-objcopy; do
+            [ -f "/opt/homebrew/opt/llvm/bin/$t" ] || [ -f "/opt/homebrew/opt/lld/bin/$t" ] || { echo "missing tool: $t"; ok=0; }
+          done
+          [ "$ok" = 1 ]
+      - name: platform seed
+        env:
+          seed: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+        run: |
+          if ! [[ "$seed" =~ ^[0-9a-fA-F]{8}$ ]]; then
+            echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
+            exit 1
+          fi
+      - name: Select locked Wi-Fi source revisions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          root = Path('device/drivers/Ath12kWifi')
+          lock = json.loads((root / 'tools/source-lock.json').read_text())
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              paths = [value.strip('/') for value in source['paths']]
+              directory = root / 'deps' / name
+              directory.parent.mkdir(parents=True, exist_ok=True)
+              if not directory.exists():
+                  directory.mkdir()
+                  git(directory, 'init')
+                  git(directory, 'remote', 'add', 'origin', source['url'])
+                  git(directory, 'sparse-checkout', 'init', '--cone')
+              else:
+                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *paths).splitlines()
+                  changes = [path for path in changes if not path.startswith('include/uapi/linux/netfilter')]
+                  if changes:
+                      raise SystemExit(name + ': refusing to replace modified imported sources')
+              git(directory, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', source['commit'])
+              git(directory, 'checkout', '--detach', source['commit'])
+              git(directory, 'sparse-checkout', 'add', '--skip-checks', *paths)
+              assert git(directory, 'rev-parse', 'HEAD') == source['commit']
+              print(name + ': selected source-lock commit ' + source['commit'])
+          PY
+      - name: Prepare locked Wi-Fi userspace inputs
+        run: |
+          python3 device/drivers/Ath12kWifi/tools/fetch-sources.py
+          python3 device/drivers/Ath12kWifi/tools/prepare-supplicant.py
+      - name: Enable the Mach page reader for iPadOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          patch = Path('UniXNU/drivers/AdrenoMetal/bridge/patches/0063-main-optimizations-on-development-46e7cc96.patch')
+          data = patch.read_bytes()
+          assert hashlib.sha256(data).hexdigest() == '6d8a717d2631920088be08614c1ba2ff6c23cf936b47762e7ab949237025b1c4'
+          patch.write_bytes(data.rstrip(b'\n') + b'\n' + base64.b64decode('LS0tIGEvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKKysrIGIvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKQEAgLTI2NDEsNyArMjY0MSw3IEBACiB9CiAKIC8vLyBbYHJlYWRfcGFnZXNgXSBvbiBtYWNPUy4KLSNbY2ZnKHRhcmdldF9vcyA9ICJtYWNvcyIpXQorI1tjZmcoYW55KHRhcmdldF9vcyA9ICJtYWNvcyIsIHRhcmdldF9vcyA9ICJpb3MiKSldCiBwdWIoY3JhdGUpIGZuIHJlYWRfcGFnZXMocGFnZXM6IE5vbk51bGw8dTg+LCBpbnRvOiAmbXV0IFt1OF0pIC0+IGJvb2wgewogICAgIHVuc2FmZSBleHRlcm4gIkMiIHsKICAgICAgICAgLy8vIGA8bWFjaC9tYWNoX2luaXQuaD5gOiB0aGUgcG9ydCBvZiB0aGlzIHByb2Nlc3MncyB0YXNrLgo='))
+          PY
+      - name: Extract pinned board firmware
+        run: |
+          python3 device/scripts/extract-files.py
+          python3 device/scripts/extract-files.py --section Video --check
+          test -s device/.cache/firmware/qcom/sm8550/sheng/vpu30_4v.mbn
+      - name: Match startup diagnostics to the iPadOS XNU layout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          patch = Path('device/patches/xnu-12377/sheng-startup-failure-log.patch')
+          assert hashlib.sha256(patch.read_bytes()).hexdigest() == '8de0a88adb005b92ec6f52846fc13d6776b97c99f348688c17c3db75ee7877f3'
+          patch.write_bytes(base64.b64decode('ZGlmZiAtLWdpdCBhL2JzZC9rZXJuL2tlcm5fZXhlYy5jIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKLS0tIGEvYnNkL2tlcm4va2Vybl9leGVjLmMKKysrIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKQEAgLTkzNDksNiArOTM0OSw4IEBACiAjaWYgZGVmaW5lZChYTlVfT1dORVJfREFUQV9NT1VOVCkgJiYgWE5VX09XTkVSX0RBVEFfTU9VTlQKIAlib290X3Byb2dyZXNzX3N0YWdlKCJEYXRhIG1vdW50IGVudGVyIik7CiAJaW50IGRhdGFfZXJyb3IgPSBuYXRpdmVfb3duZXJfZGF0YV9wcmVwYXJlKHAsICh1c2VyX2FkZHJfdClzY3JhdGNoX2FkZHIpOworCWV4dGVybiB2b2lkIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KGNvbnN0IGNoYXIgKiwgaW50KSBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOworCWlmICgmYm9vdF9sb2dfc3RhcnR1cF9yZXN1bHQpIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KCJEYXRhIG1vdW50IHJldHVybmVkIiwgZGF0YV9lcnJvcik7CiAJYm9vdF9wcm9ncmVzc19zdGFnZSgiRGF0YSBtb3VudCByZXR1cm5lZCIpOwogCWlmIChkYXRhX2Vycm9yKSBwYW5pYygib2ZmbGluZSBzY3JhdGNoIERhdGEgbW91bnQgZmFpbGVkOiAlZCIsIGRhdGFfZXJyb3IpOwogI2lmIGRlZmluZWQoWE5VX0JPT1RfUFJPR1JFU1MpICYmIFhOVV9CT09UX1BST0dSRVNTCkBAIC05MzYxLDE0ICs5MzYzLDE4IEBACiAJLyogV2l0aG91dCBCb290UHJvZ3Jlc3MgKGlQYWRPUyAyNyk6IHRoZSBzYW1lIGxhdW5jaGQgam9iIHBvbGljeSwgZnJvbSB0aGUgc291cmNlIHN0b3JhZ2UgYXJjaGl2ZS4gKi8KIAlleHRlcm4gaW50IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHZvaWQgKiwgdWludDY0X3QpIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CiAJaWYgKHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KSB7CisJCWJvb3RfcHJvZ3Jlc3Nfc3RhZ2UoImxhdW5jaCBwb2xpY3kgZW50ZXIiKTsKIAkJaW50IHBvbGljeV9lcnJvciA9IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHAsICh1aW50NjRfdClzY3JhdGNoX2FkZHIpOworCQlpZiAoJmJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KSBib290X2xvZ19zdGFydHVwX3Jlc3VsdCgibGF1bmNoIHBvbGljeSByZXR1cm5lZCIsIHBvbGljeV9lcnJvcik7CiAJCS8qIEEgZnVsbCBvciB1bndyaXRhYmxlIERhdGEgdm9sdW1lIChFTk9TUEMpIG9ubHkgbG9zZXMgdGhlIGpvYiBwb2xpY3k6IGJvb3Qgb24gaW5zdGVhZCBvZiBhIHBhbmljLiAqLwogCQlpZiAocG9saWN5X2Vycm9yKSBwcmludGYoInNoZW5nIHdhdGNoZG9nIGxhdW5jaCBwb2xpY3kgZmFpbGVkOiAlZCAoY29udGludWluZylcbiIsIHBvbGljeV9lcnJvcik7CiAJfQogI2VuZGlmCiAjZW5kaWYKICNpZiBDT05GSUdfTUVNT1JZU1RBVFVTCisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCBlbnRlciIpOwogCSh2b2lkKSBtZW1vcnlzdGF0dXNfaW5pdF9hdF9ib290X3NuYXBzaG90KCk7CisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCByZXR1cm5lZCIpOwogI2VuZGlmIC8qIENPTkZJR19NRU1PUllTVEFUVVMgKi8KIAogI2lmIChERUJVRyB8fCBERVZFTE9QTUVOVCkgJiYgZGVmaW5lZChYTlVfTkFUSVZFX0FJUl9JTklUKSAmJiBYTlVfTkFUSVZFX0FJUl9JTklUCmRpZmYgLS1naXQgYS9vc2Ztay9rZXJuL2RlYnVnLmMgYi9vc2Ztay9rZXJuL2RlYnVnLmMKLS0tIGEvb3NmbWsva2Vybi9kZWJ1Zy5jCisrKyBiL29zZm1rL2tlcm4vZGVidWcuYwpAQCAtMTI1Miw2ICsxMjUyLDkgQEAKICAgICB1aW50NjRfdCBwYW5pY19vcHRpb25zX21hc2ssIHZvaWQgKnBhbmljX2RhdGFfcHRyLCB1bnNpZ25lZCBsb25nIHBhbmljX2NhbGxlciwgY29uc3QgY2hhciAqcGFuaWNfaW5pdGlhdG9yKQogewogI3ByYWdtYSBjbGFuZyBkaWFnbm9zdGljIHBvcAorCWV4dGVybiB2b2lkIGJvb3RfbG9nX3BhbmljX3JlY29yZChjb25zdCBjaGFyICosIHZhX2xpc3QgKiwgdW5zaWduZWQgbG9uZykgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKKwlpZiAoJmJvb3RfbG9nX3BhbmljX3JlY29yZCkgYm9vdF9sb2dfcGFuaWNfcmVjb3JkKHBhbmljX2Zvcm1hdF9zdHIsIHBhbmljX2FyZ3MsIHBhbmljX2NhbGxlcik7CisKIAogI2lmIGRlZmluZWQoX194ODZfNjRfXykgJiYgKERFVkVMT1BNRU5UIHx8IERFQlVHKQogCXJlYWRfbGJyKCk7Cg=='))
+          PY
+      - name: Select the touch SPI component
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          path = Path('device/board.toml')
+          text = path.read_text()
+          first = text.index('["components"]')
+          last = text.index('\n\n', first)
+          section = text[first:last]
+          assert tomllib.loads(section)['components']['include'].count('ShengUfs') == 1
+          assert 'QcomGeniSpi' not in section
+          fixed = text[:first] + section.replace('"ShengUfs"', '"ShengUfs", "QcomGeniSpi"', 1) + text[last:]
+          assert 'QcomGeniSpi' in tomllib.loads(fixed)['components']['include']
+          path.write_text(fixed)
+          PY
+      - name: Scope the clamshell diagnostic to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          path = Path('device/package/KeyboardProbe.cpp')
+          original = path.read_bytes()
+          assert hashlib.sha256(original).hexdigest() == '30e36264f7b693994721a92b33d827b49436744db9c0f5b20583ab9462c95c9b'
+          line = base64.b64decode('c3RhdGljIGNvbnN0IGNoYXIga0NsYW1zaGVsbExvZ1tdIEtFWUJPQVJEX0NPTlNUID0gInNoZW5nIGtleWJvYXJkOiBjbGFtc2hlbGwgJXMgc2VudCB0byB0aGUgcG93ZXIgbWFuYWdlclxuIjsK')
+          assert original.count(line) == 1
+          fixed = original.replace(line, b'#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX\n' + line + b'#endif\n')
+          assert hashlib.sha256(fixed).hexdigest() == 'c8928a961118064fc34388e8fc78396799acdc0d4c3cc47921a36bc89988d10b'
+          path.write_bytes(fixed)
+          PY
+      - name: Scope sleep diagnostics to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, subprocess
+          path = Path('device/package/ShengSleep.cpp')
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == 'bc6bdedc360cf1acb82b30d5c28cb809bb58d92eeedc66d67dcbeda68cb23547'
+          subprocess.run(['git', 'apply', '-'], input=base64.b64decode('LS0tIGEvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKKysrIGIvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKQEAgLTU0LDcgKzU0LDkgQEAKIAogbmFtZXNwYWNlIHsKIGNvbnN0ZXhwciB1aW50MzJfdCBrSW8gPSAweDQsIGtJbnRyQ2ZnID0gMHg4LCBrSW50clN0YXR1cyA9IDB4YzsKKyNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogY29uc3RleHByIElPT3B0aW9uQml0cyBrV2FrZUV2ZW50U291cmNlID0gMHgxOyAgIC8vIGtJT1BNV2FrZUV2ZW50U291cmNlIChJT1BNUHJpdmF0ZS5oKQorI2VuZGlmCiAKIElPTWVtb3J5TWFwICpnVGxtbU1hcDsKIHVpbnRwdHJfdCBnVGxtbTsKQEAgLTExNCw2ICsxMTYsNyBAQAogCiBjb25zdCBhcm1jcHVfc2xlZXBfYm9hcmQgZ0JvYXJkID0ge3ByZXBhcmUsIHNob3VsZFdha2UsIHJlc3RvcmUsIGtXYWtlU3Bpcywgc2l6ZW9mIGtXYWtlU3BpcyAvIHNpemVvZiBrV2FrZVNwaXNbMF0sIHRpY2ssIDEwfTsKIAorI2lmIGRlZmluZWQoWE5VX1RBUkdFVF9PU19PU1gpICYmIFhOVV9UQVJHRVRfT1NfT1NYCiAvLyBUaGUgd2FrZSBzb3VyY2VzIGEgc2xlZXAgY2FuIGNvdW50IG9uOiB0aGUga2V5Ym9hcmQgcHJvYmUgcGFzdCBpdHMgaW50ZXJydXB0IHN0ZXAgKHN0YWdlIDUgYW5kIG9uKSBob2xkcyB0aGUgVExNTSBzdW1tYXJ5LCB0aGUKIC8vIGJ1dHRvbnMgYXJtZWQgKHN0YWdlIDMpIGhvbGQgdGhlIFNQTUkgbGluZS4KIGJvb2wgbGlkQXJtZWQoKSB7cmV0dXJuICZuYXRpdmVfa2V5Ym9hcmRfc3RhdHMgJiYgbmF0aXZlX2tleWJvYXJkX3N0YXRzWzBdID49IDU7fQpAQCAtMTI0LDcgKzEyNyw2IEBACiAgICAgcmV0dXJuIGh6ID8gdGlja3MgLyAoaHogLyAxMDAwKSA6IDA7CiB9CiAKLSNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogSU9SZXR1cm4gc2xlZXBXYWtlKHZvaWQgKiwgdm9pZCAqLCBuYXR1cmFsX3QgbWVzc2FnZSwgSU9TZXJ2aWNlICosIHZvaWQgKiwgdm1fc2l6ZV90KSB7CiAgICAgSU9QTXJvb3REb21haW4gKnJvb3QgPSBJT1NlcnZpY2U6OmdldFBNUm9vdERvbWFpbigpOwogICAgIHN3aXRjaCAobWVzc2FnZSkgewo='), check=True)
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == '45ae20e250cbc9ba553fa525e01669fdca23968e0c31c663c685668bdf7c815d'
+          PY
+      - name: Select available iPadOS kernel interfaces
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, subprocess
+          for path, digest in [('device/package/BootLog.c', '42834fb2e3110e9731012b3e54927049b635569c3da0cb32612066a8bcbbe5cc'), ('device/package/LegacyDisplayProbe.cpp', 'ace25719d26936ea829fa99806c86506b264f186d357faa034c1e32ba0e060a8'), ('UniXNU/drivers/Adreno740/NativeAdrenoPublish.cpp', '92f316530294bb68ac181bd738b5b3a0e09b2854cd1356202f8dd040f0b96b8c'), ('UniXNU/drivers/RamBlock/NativeRamBlock.cpp', '772d47a069c50c9bf92f6c9292668340e005a61d996651033d9af2b6474b897c')]:
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          subprocess.run(['git','apply','-'], input=base64.b64decode('LS0tIGEvZGV2aWNlL3BhY2thZ2UvQm9vdExvZy5jCisrKyBiL2RldmljZS9wYWNrYWdlL0Jvb3RMb2cuYwpAQCAtMzc0LDEwICszNzQsMTIgQEAKIGV4dGVybiB1aW50NjRfdCBjc19uYXRpdmU0a19yZWFkX3RpY2tzIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSksIGNzX25hdGl2ZTRrX2hhc2hfdGlja3MgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKSwKICAgY3NfbmF0aXZlNGtfYnl0ZXMgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKIGV4dGVybiB1bnNpZ25lZCBsb25nIGNzX25hdGl2ZTRrX3JlYWR5X2Jsb2JzIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CisjaWYgIShkZWZpbmVkKF9fRU5WSVJPTk1FTlRfSVBIT05FX09TX1ZFUlNJT05fTUlOX1JFUVVJUkVEX18pICYmIF9fRU5WSVJPTk1FTlRfSVBIT05FX09TX1ZFUlNJT05fTUlOX1JFUVVJUkVEX18gPj0gMjcwMDAwKQogZXh0ZXJuIHVpbnQ2NF90IGNzX25hdGl2ZTRrX2RpZ2VzdF93YWxsWzJdIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSksIGNzX25hdGl2ZTRrX2RpZ2VzdF9jcHVbMl0gX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKSwKICAgY3NfbmF0aXZlNGtfZGlnZXN0X2J5dGVzWzJdIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSksIGNzX25hdGl2ZTRrX2NodW5rX3RpY2tzIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSksCiAgIGNzX25hdGl2ZTRrX3JlY29yZF90aWNrcyBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOwogZXh0ZXJuIHVuc2lnbmVkIGxvbmcgY3NfbmF0aXZlNGtfY2h1bmtzX21hZGUgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKKyNlbmRpZgogZXh0ZXJuIHZvbGF0aWxlIHVpbnQzMl90IHNoZW5nX2VkZ2VfaWRsZV9iZXNpZGVfcXVldWVkWzJdWzhdIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CiBleHRlcm4gdm9sYXRpbGUgdWludDMyX3QgbmF0aXZlX3RvdWNoX2Nvc3RbOV0gX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKIGV4dGVybiB2b2xhdGlsZSB1aW50MzJfdCBuYXRpdmVfdG91Y2hfaXJxX3N0YXRzWzRdIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CkBAIC0xMDA0LDYgKzEwMDYsNyBAQAogICAgICAgICAgICAgICh1bnNpZ25lZCBsb25nIGxvbmcpKGNzX25hdGl2ZTRrX2J5dGVzID4+IDIwKSwgKHVuc2lnbmVkIGxvbmcgbG9uZykocmVhZF9ucyAvIDEwMDAwMDApLCAodW5zaWduZWQgbG9uZyBsb25nKShoYXNoX25zIC8gMTAwMDAwMCkpOwogICAgIGF0ID0gcHV0KG91dCwgYXQsIGNhcCwgcm93LCBzaXplb2Ygcm93KTsKICAgfQorI2lmICEoZGVmaW5lZChfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fKSAmJiBfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fID49IDI3MDAwMCkKICAgLy8gVGhlIGRpZ2VzdHMgYWxvbmUgKGNzc2hhLWRpZ2VzdC10aW1lLnBhdGNoKTogTWlCIGhhc2hlZCwgd2FsbCBtcyBhbmQgdGhlIHRocmVhZHMnIG93biBDUFUgbXMsIG9uIGVmZmljaWVuY3kgY29yZXMgYW5kCiAgIC8vIG9uIHRoZSBvdGhlcnM7IHRoZW4gdGhlIGNodW5rcyBvZiBsYXp5IGFuc3dlcnMgbWFkZSwgdGhlIG1zIG1ha2luZyB0aGVtIGFuZCB0aGUgbXMgcmVjb3JkaW5nIGFuc3dlcnMuCiAgIGlmICgmY3NfbmF0aXZlNGtfZGlnZXN0X3dhbGwgJiYgJmNzX25hdGl2ZTRrX2RpZ2VzdF9jcHUgJiYgJmNzX25hdGl2ZTRrX2RpZ2VzdF9ieXRlcyAmJiAmY3NfbmF0aXZlNGtfY2h1bmtfdGlja3MgJiYKQEAgLTEwMjMsNiArMTAyNiw3IEBACiAgICAgICAgICAgICAgKHVuc2lnbmVkIGxvbmcgbG9uZykoY2h1bmtfbnMgLyAxMDAwMDAwKSwgKHVuc2lnbmVkIGxvbmcgbG9uZykocmVjb3JkX25zIC8gMTAwMDAwMCkpOwogICAgIGF0ID0gcHV0KG91dCwgYXQsIGNhcCwgcm93LCBzaXplb2Ygcm93KTsKICAgfQorI2VuZGlmCiAgIGlmIChsb2dfZGlzcGxheV9vbiAmJiAmbmF0aXZlX2xlZ2FjeV9zd2FwX3JlamVjdGVkX2NvdW50ICYmIG5hdGl2ZV9sZWdhY3lfc3dhcF9yZWplY3RlZF9jb3VudCkgewogICAgIGNoYXIgcm93WzIyMF07CiAgICAgc25wcmludGYocm93LCBzaXplb2Ygcm93LCAiUkVKIGFjYz0ldSByZWo9JXUgcj0ldSBzdD0leC8leC8leCBvcD0leC8leC8leCB3aD0ldXgldSBzPSVsbHgvJWxseC8lbGx4LyVsbHggY2xzPSUuMjRzIiwKLS0tIGEvZGV2aWNlL3BhY2thZ2UvTGVnYWN5RGlzcGxheVByb2JlLmNwcAorKysgYi9kZXZpY2UvcGFja2FnZS9MZWdhY3lEaXNwbGF5UHJvYmUuY3BwCkBAIC0xNDMsOCArMTQzLDE0IEBACiAgICAgbmF0aXZlX2xlZ2FjeV9yZWpfc3VyZmFjZVs0XT1zdHJpZGU7bmF0aXZlX2xlZ2FjeV9yZWpfc3VyZmFjZVs1XT1hbGxvY2F0aW9uO25hdGl2ZV9sZWdhY3lfcmVqX3N1cmZhY2VbNl09Ynl0ZXM7CiB9CiAvLyBUaGUgZGlzcGxheSdzIHJlcXVlc3QgbGF5b3V0IChyZWN0YW5nbGVzLCBtYXNrcywgb3B0aW9ucywgZGltZW5zaW9ucywgc3VyZmFjZXMpOyB0aGUgaVBhZE9TIDE3IG9uZSB3aGVuIHRoZSBkaXNwbGF5IGhhcyBub25lLgorI2lmICEoZGVmaW5lZChfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fKSAmJiBfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fID49IDI3MDAwMCkKIGV4dGVybiAiQyIgY29uc3QgdW5zaWduZWQgbmF0aXZlX2xlZ2FjeV9yZXF1ZXN0X2xheW91dFs2XSBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOworI2VuZGlmCiBzdGF0aWMgdm9pZCByZWNvcmRSZWplY3RlZFN3YXAodW5zaWduZWQgcmVhc29uLGNvbnN0IHZvaWQgKnJlcXVlc3QsY29uc3Qgdm9pZCAqc3VyZmFjZSkgeworI2lmIGRlZmluZWQoX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXykgJiYgX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXyA+PSAyNzAwMDAKKyAgICAodm9pZClyZXF1ZXN0OworICAgIG5hdGl2ZV9sZWdhY3lfcmVqX3JlYXNvbj1yZWFzb247CisjZWxzZQogICAgIGNvbnN0IHVuc2lnbmVkIGNoYXIgKmJ5dGVzPXJlaW50ZXJwcmV0X2Nhc3Q8Y29uc3QgdW5zaWduZWQgY2hhciAqPihyZXF1ZXN0KTsKICAgICBpZighYnl0ZXMpcmV0dXJuOwogICAgIHN0YXRpYyBjb25zdCB1bnNpZ25lZCBpb3MxN1s2XT17MTcsODEsNzkyLDgwNCw4MTYsMjYyNH07CkBAIC0xNTgsNiArMTY0LDcgQEAKICAgICBjb25zdCB1bnNpZ25lZCByZWN0T2Zmc2V0c1syXT17bGF5b3V0WzBdLGxheW91dFsxXX07CiAgICAgZm9yKHVuc2lnbmVkIHI9MDtyPDI7KytyKXt1aW50MzJfdCByZWN0WzRdPXt9O21lbWNweShyZWN0LGJ5dGVzK3JlY3RPZmZzZXRzW3JdLHNpemVvZihyZWN0KSk7CiAgICAgICAgIGZvcih1bnNpZ25lZCBpPTA7aTw0OysraSluYXRpdmVfbGVnYWN5X3Jlal9yZWN0c1tyXVtpXT1yZWN0W2ldO30KKyNlbmRpZgogICAgIGNoYXIgbmFtZVszMl09e307CiAgICAgaWYoc3VyZmFjZSl7Y29uc3QgT1NPYmplY3QgKm9iamVjdD1yZWludGVycHJldF9jYXN0PGNvbnN0IE9TT2JqZWN0ICo+KHN1cmZhY2UpOwogICAgICAgICBjb25zdCBPU01ldGFDbGFzcyAqbWV0YT1vYmplY3QtPmdldE1ldGFDbGFzcygpO2NvbnN0IGNoYXIgKmNscz1tZXRhP21ldGEtPmdldENsYXNzTmFtZSgpOm51bGxwdHI7CkBAIC01MzIsOCArNTM5LDEwIEBACiBleHRlcm4gdm9pZCBzaGVuZ193aWZpX3Byb2JlKHZvaWQpOwogZXh0ZXJuIHZvaWQgc2hlbmdfYmx1ZXRvb3RoX3Byb2JlKHZvaWQpIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CiBleHRlcm4gdm9pZCBzaGVuZ191c2JfcHJvYmUodm9pZCkgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKKyNpZiAhKGRlZmluZWQoX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXykgJiYgX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXyA+PSAyNzAwMDApCiBleHRlcm4gIkMiIHZvaWQgc2hlbmdfZXRoZXJuZXRfcHJvYmUodm9pZCkgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsgICAvLyBtYWNPUyBidWlsZHMgb25seSAoU2hlbmdFdGhlcm5ldC5jcHApCiBleHRlcm4gIkMiIHZvaWQgc2hlbmdfc29mdHdhcmVfYWVzX3Byb2JlKHZvaWQpIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7ICAgLy8gbWFjT1MgYnVpbGRzIG9ubHkgKFNvZnR3YXJlQWVzUHJvYmUuY3BwKQorI2VuZGlmCiBleHRlcm4gdm9pZCBzaGVuZ19hZHNwX3Byb2JlKHZvaWQpOwogZXh0ZXJuIHZvaWQgc2hlbmdfYmF0dGVyeV9wcm9iZSh2b2lkKTsKIGV4dGVybiB2b2lkIHNoZW5nX2F1ZGlvX3Byb2JlKHZvaWQpOwpAQCAtNjE3LDggKzYyNiwxMCBAQAogCiB2b2lkIG5hdGl2ZV9sZWdhY3lfZGlzcGxheV9sYXRlX3Byb2JlKHZvaWQpIHsKICAgICB7dGhyZWFkX3QgdGhyZWFkID0gbnVsbHB0cjsgaWYgKGtlcm5lbF90aHJlYWRfc3RhcnQoYnVzeVJlcG9ydCwgbnVsbHB0ciwgJnRocmVhZCkgPT0gS0VSTl9TVUNDRVNTKSB0aHJlYWRfZGVhbGxvY2F0ZSh0aHJlYWQpO30KKyNpZiAhKGRlZmluZWQoX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXykgJiYgX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXyA+PSAyNzAwMDApCiAgICAgLy8gRmlyc3Q6IEFwcGxlSW1hZ2U0J3Mgc3RhcnQgYWxyZWFkeSB3YWl0cyBmb3IgYW4gSU9BRVNBY2NlbGVyYXRvciwgaG9sZGluZyBpdHMgZXhwZXJ0IGxvY2sgKFNvZnR3YXJlQWVzUHJvYmUuY3BwKS4KICAgICBpZiAoc2hlbmdfc29mdHdhcmVfYWVzX3Byb2JlKSBzaGVuZ19zb2Z0d2FyZV9hZXNfcHJvYmUoKTsKKyNlbmRpZgogICAgIG5hdGl2ZV9rZXlzdG9yZV9wcm9iZSgpOwogICAgIHNoZW5nX2NwdWZyZXFfcHJvYmUoKTsKICAgICBpZiAoc2hlbmdfdGhlcm1hbF9wcm9iZSkgc2hlbmdfdGhlcm1hbF9wcm9iZSgpOwpAQCAtNjMxLDcgKzY0Miw5IEBACiAgICAgc2hlbmdfd2lmaV9wcm9iZSgpOwogICAgIGlmIChzaGVuZ19ibHVldG9vdGhfcHJvYmUpIHNoZW5nX2JsdWV0b290aF9wcm9iZSgpOwogICAgIGlmIChzaGVuZ191c2JfcHJvYmUpIHNoZW5nX3VzYl9wcm9iZSgpOworI2lmICEoZGVmaW5lZChfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fKSAmJiBfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fID49IDI3MDAwMCkKICAgICBpZiAoc2hlbmdfZXRoZXJuZXRfcHJvYmUpIHNoZW5nX2V0aGVybmV0X3Byb2JlKCk7CisjZW5kaWYKICAgICBzaGVuZ19hZHNwX3Byb2JlKCk7CiAgICAgc2hlbmdfYmF0dGVyeV9wcm9iZSgpOwogICAgIHNoZW5nX2F1ZGlvX3Byb2JlKCk7Ci0tLSBhL1VuaVhOVS9kcml2ZXJzL0FkcmVubzc0MC9OYXRpdmVBZHJlbm9QdWJsaXNoLmNwcAorKysgYi9VbmlYTlUvZHJpdmVycy9BZHJlbm83NDAvTmF0aXZlQWRyZW5vUHVibGlzaC5jcHAKQEAgLTMzNCw3ICszMzQsOSBAQAogICogcmVwb3J0cyB0aGUgcGFnZXIncyBjbG9zZSAoaW9raXRfcGh5c2ljYWxfZGVzY3JpcHRvcl9jbG9zZV9ub3RpZnkpLCB0aGUgdmlldydzIHJlZmVyZW5jZSBnb2VzIG9ubHkgdGhlbiwgd2hlbiBubyBtYXAgZW50cnksIG1lbW9yeQogICogZW50cnkgb3IgY29weSByZWZlcnMgdG8gdGhhdCBWTSBvYmplY3QgYW55IG1vcmUsIGFuZCB0aGUgcGFnZXMgcmV0dXJuIHRvIHRoZSBwb29sLiBXaXRob3V0IHRoYXQgcmVwb3J0IHRoZSBwb29sIGRvZXMgbm90IHJldXNlCiAgKiB0aGUgcGFnZXMgb2YgYSBncmFudCB0aGF0IGhhZCBhIHZpZXcgdW5sZXNzIHRoZSBib2FyZCBzZXQgZ3B1LXBvb2w9MiAoTmF0aXZlQWRyZW5vUG9vbC5oKS4gKi8KKyNpZiAhKGRlZmluZWQoX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXykgJiYgX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXyA+PSAyNzAwMDApCiBleHRlcm4gIkMiIGtlcm5fcmV0dXJuX3QgaW9raXRfcGh5c2ljYWxfZGVzY3JpcHRvcl9jbG9zZV9ub3RpZnkoSU9NZW1vcnlEZXNjcmlwdG9yICosdm9pZCAoKikodm9pZCAqKSx2b2lkICopIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CisjZW5kaWYKIGNsYXNzIE5hdGl2ZUFkcmVub1Bvb2xWaWV3IDogcHVibGljIElPR2VuZXJhbE1lbW9yeURlc2NyaXB0b3IgewogICAgIE9TRGVjbGFyZURlZmF1bHRTdHJ1Y3RvcnMoTmF0aXZlQWRyZW5vUG9vbFZpZXcpCiAgICAgTmF0aXZlQWRyZW5vUG9vbEdyYW50ICpncmFudF89bnVsbHB0cjsKQEAgLTM2MCw5ICszNjIsMTQgQEAKICAgICBpZih2aWV3KSB7CiAgICAgICAgIE5hdGl2ZUFkcmVub1Bvb2xSZXRhaW4oZ3JhbnQpOwogICAgICAgICAvKiBCZWZvcmUgYW55dGhpbmcgY2FuIG1hcCB0aGUgdmlldzogZnJvbSBoZXJlIG9uIHRoZSByZWZlcmVuY2UgYmVsb25ncyB0byB0aGUga2VybmVsJ3MgcmVwb3J0LCB3aGljaCBjb21lcyBleGFjdGx5IG9uY2UuICovCisjaWYgZGVmaW5lZChfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fKSAmJiBfX0VOVklST05NRU5UX0lQSE9ORV9PU19WRVJTSU9OX01JTl9SRVFVSVJFRF9fID49IDI3MDAwMAorICAgICAgICBuYXRpdmVfYWRyZW5vX3Bvb2xfdmlld3NbNF09MDsKKyAgICAgICAgdmlldy0+dHJhY2tlZF89ZmFsc2U7CisjZWxzZQogICAgICAgICBjb25zdCBib29sIGhvb2s9Jmlva2l0X3BoeXNpY2FsX2Rlc2NyaXB0b3JfY2xvc2Vfbm90aWZ5IT1udWxscHRyOwogICAgICAgICBuYXRpdmVfYWRyZW5vX3Bvb2xfdmlld3NbNF09aG9vaz8xOjA7CiAgICAgICAgIHZpZXctPnRyYWNrZWRfPWhvb2sgJiYgaW9raXRfcGh5c2ljYWxfZGVzY3JpcHRvcl9jbG9zZV9ub3RpZnkodmlldyxOYXRpdmVBZHJlbm9Qb29sVmlld0Nsb3NlZCxncmFudCk9PUtFUk5fU1VDQ0VTUzsKKyNlbmRpZgogICAgICAgICBOYXRpdmVBZHJlbm9Qb29sTm90ZVZpZXcoZ3JhbnQsdmlldy0+dHJhY2tlZF8pOyAgIC8qIGEgY2xpZW50IGNhbiBtYXAgdGhlIHBhZ2VzIGZyb20gaGVyZSBvbiAqLwogICAgICAgICB2aWV3LT5ncmFudF89Z3JhbnQ7CiAgICAgfQotLS0gYS9VbmlYTlUvZHJpdmVycy9SYW1CbG9jay9OYXRpdmVSYW1CbG9jay5jcHAKKysrIGIvVW5pWE5VL2RyaXZlcnMvUmFtQmxvY2svTmF0aXZlUmFtQmxvY2suY3BwCkBAIC0yNCw3ICsyNCw5IEBACiBleHRlcm4gIkMiIHsKIGV4dGVybiB1bnNpZ25lZCBsb25nIGdQaHlzQmFzZSwgZ1BoeXNTaXplOwogLy8gVGhlIGtlcm5lbCdzIHJlbGVhc2Ugb2YgbG9hZGVyIG1lbW9yeSAocGF5bG9hZC1hZGRvbi1yZWxlYXNlLnBhdGNoKTsgYWJzZW50IGluIGEga2VybmVsIHdpdGhvdXQgaXQuCisjaWYgIShkZWZpbmVkKF9fRU5WSVJPTk1FTlRfSVBIT05FX09TX1ZFUlNJT05fTUlOX1JFUVVJUkVEX18pICYmIF9fRU5WSVJPTk1FTlRfSVBIT05FX09TX1ZFUlNJT05fTUlOX1JFUVVJUkVEX18gPj0gMjcwMDAwKQogYm9vbCBtbF9zdGF0aWNfbWZyZWVfcHJlcGFyZSh2bV9vZmZzZXRfdCwgdm1fc2l6ZV90KSBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOworI2VuZGlmCiB2b2lkIElPRFRGcmVlTG9hZGVySW5mbyhjb25zdCBjaGFyICosIHZvaWQgKiwgaW50KTsKIGludCBuYXRpdmVfcmFtX2Jsb2NrX3ZvbHVtZV9kZXZpY2UoY29uc3QgY2hhciAqLCBkZXZfdCAqLCBjaGFyICosIHNpemVfdCk7CiB2b2xhdGlsZSB1aW50MzJfdCBuYXRpdmVfcmFtX2Jsb2NrX3JlYWR5ID0gMDsKQEAgLTQwOCwxMiArNDEwLDE0IEBACiAgIC8vIEEgcGFja2VkIHNlZWQgd2FzIGNvcGllZCBwYWdlIGJ5IHBhZ2UgaW50byB0aGlzIGRpc2sncyBvd24gbWVtb3J5IGFuZCBoYXNoZWQgZnJvbSB0aGVyZTogbm90aGluZyByZWFkcyB0aGUgbG9hZGVyJ3MKICAgLy8gY29weSBhZ2Fpbi4gV2l0aCBib290LXBheWxvYWQtcmVsZWFzZT0xIGl0cyB3aG9sZSBwYWdlcyBnbyBiYWNrIHRvIHRoZSBWTSB0aGUgd2F5IFhOVSByZXR1cm5zIGxvYWRlciBtZW1vcnksIGFuZCB0aGUKICAgLy8gcmFuZ2UgbGVhdmVzIHRoZSByZWdpc3RyeSdzIC9jaG9zZW4vbWVtb3J5LW1hcCwgc28gYSBzZWNvbmQgc3RhcnQgZmluZHMgbm8gc2VlZCBpbnN0ZWFkIG9mIGZyZWVkIG1lbW9yeS4KKyNpZiAhKGRlZmluZWQoX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXykgJiYgX19FTlZJUk9OTUVOVF9JUEhPTkVfT1NfVkVSU0lPTl9NSU5fUkVRVUlSRURfXyA+PSAyNzAwMDApCiAgIHVpbnQzMl90IHJlbGVhc2UgPSAwOwogICBpZiAocGFja2VkSW5wdXQgJiYgIW1lbW9yeSAmJiBQRV9wYXJzZV9ib290X2FyZ24oImJvb3QtcGF5bG9hZC1yZWxlYXNlIiwgJnJlbGVhc2UsIHNpemVvZiByZWxlYXNlKSAmJiByZWxlYXNlID09IDEgJiYKICAgICAgIG1sX3N0YXRpY19tZnJlZV9wcmVwYXJlICYmIGJ5dGVzIDw9IElOVDMyX01BWCAmJiBtbF9zdGF0aWNfbWZyZWVfcHJlcGFyZShtbF9zdGF0aWNfcHRvdmlydChwaHlzaWNhbCksIGJ5dGVzKSkgewogICAgIElPRFRGcmVlTG9hZGVySW5mbygiUGFja2VkUkFNRGlzayIsIHJlaW50ZXJwcmV0X2Nhc3Q8dm9pZCAqPihwaHlzaWNhbCksIHN0YXRpY19jYXN0PGludD4oYnl0ZXMpKTsKICAgICBuYXRpdmVfcmFtX2Jsb2NrX3NlZWRfcmVsZWFzZWQgPSBzdGF0aWNfY2FzdDx1aW50MzJfdD4oYnl0ZXMgPj4gMTIpOwogICB9CisjZW5kaWYKICAgbWVtY3B5KG5hdGl2ZV9yYW1fYmxvY2tfc2VlZF9zaGEyNTYsc2VlZEhhc2gsMzIpOwogICBuYXRpdmVfcmFtX2Jsb2NrX2J5dGVzID0gbG9naWNhbDsKICAgbmF0aXZlX3JhbV9ibG9ja19zcGFyc2U9KHNwYXJzZS5wYWdlc3x8aXNCaWcpPzE6MDsK'), check=True)
+          PY
+      - name: Build iPadOS 27.0.1
+        working-directory: device
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/package.sh --os 27 --uefi ../uefi-sheng --init-data
+      - name: Encrypt failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > recipient.pem <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERT
+          target=UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27
+          mkdir -p diagnostics
+          if [ -d "$target/logs" ]; then cp -R "$target/logs" diagnostics/package-logs; fi
+          shopt -s nullglob
+          for log in "$target"/tree/build/adreno-metal-bridge/build-*.log; do cp "$log" diagnostics/; done
+          tar -C diagnostics -cf - . |
+            /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-ipados-diagnostics.cms recipient.pem
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: sheng-ipados-diagnostics-encrypted
+          retention-days: 3
+          if-no-files-found: ignore
+          path: sheng-ipados-diagnostics.cms
+      - name: Encrypt device-specific images
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > recipient.pem <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERT
+          target=UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27
+          tar -C "$target" -cf - boot/boot.img payload/payload.img kernel/kernel.macho package.manifest.json runtime/data.dbr |
+            /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-ipados-27.cms recipient.pem
+          shasum -a 256 sheng-ipados-27.cms > sheng-ipados-27.cms.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sheng-ipados-27-encrypted
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            sheng-ipados-27.cms
+            sheng-ipados-27.cms.sha256
