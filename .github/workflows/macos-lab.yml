@@ -57,7 +57,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: diagnostic-harness
-          sparse-checkout: scripts/guard-sheng-memory.py
+          sparse-checkout: |
+            scripts/guard-sheng-memory.py
+            scripts/installed-root-policy.json
+            scripts/import-installed-root-policy.py
       - name: Check out core sources
         uses: actions/checkout@v4
         with:
@@ -159,19 +162,6 @@ jobs:
           source = Path('previous-artifacts')
           seed = source / 'data.dbr'
           assert hashlib.sha256(seed.read_bytes()).hexdigest() == 'a8a3d462267138556cb0aa73368b960e40355502d6aa12da63de56d0960c90d7'
-          # The official policy importer accepts a raw FAT ramdisk. Retain the
-          # original payload so importing policies does not require BaseTools.
-          payload = source / 'payload.img'
-          assert payload.read_bytes()[:8] != b'UNXNFAT1'
-          header = bytearray(4096)
-          header[:8] = b'ANDROID!'
-          struct.pack_into('<I', header, 16, payload.stat().st_size)
-          struct.pack_into('<I', header, 36, 4096)
-          with (source / 'unpacked-boot.img').open('wb') as output:
-              output.write(header)
-              with payload.open('rb') as incoming:
-                  import shutil
-                  shutil.copyfileobj(incoming, output)
           runtime = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime')
           runtime.mkdir(parents=True, exist_ok=True)
           import shutil
@@ -216,7 +206,7 @@ jobs:
         run: |
           ./unixnu defconfig sheng_macos_defconfig -D ../device --os macos-27
           ./unixnu fetch --os macos-27
-          python3 ../device/scripts/import-root-policies.py ../previous-artifacts/unpacked-boot.img --policies ../device/scripts/policies/macos-27.3-26C5035r
+          python3 ../diagnostic-harness/scripts/import-installed-root-policy.py ../diagnostic-harness/scripts/installed-root-policy.json ../device/scripts/policies/macos-27.3-26C5035r
           if [ '${{ inputs.root_storage }}' = true ]; then
             python3 ../device/scripts/prepare-macos-install.py
           else
@@ -237,7 +227,14 @@ jobs:
           matches = [str(p) for p in Path('uefi-sheng/Build').rglob('*') if p.suffix.lower() in ('.efi', '.dll') and needle in p.read_bytes()]
           assert matches, 'Verified tablet memory guard missing'
           target = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos')
-          records = dict(device='6c42e1055ffb3b335fda991190ad221edaa7af3c', core='bba3b57879e94e5ec1632daafb74cbcab8af49a5', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, hardware_tested=False)
+          import base64
+          installed = json.loads(Path('diagnostic-harness/scripts/installed-root-policy.json').read_text())
+          key = base64.b64decode(installed['public_key_base64'])
+          assert key in (target / 'kernel/kernel.macho').read_bytes(), 'Compiled kernel does not trust the current installed root'
+          for name in ('OS', 'SystemOS', 'App'):
+              directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
+              assert (directory / 'manifest.header.bin').read_bytes() == base64.b64decode(installed['signed_headers'][name])
+          records = dict(device='6c42e1055ffb3b335fda991190ad221edaa7af3c', core='bba3b57879e94e5ec1632daafb74cbcab8af49a5', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY
