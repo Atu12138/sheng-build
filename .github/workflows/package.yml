@@ -108,6 +108,19 @@ jobs:
               assert git(directory, 'rev-parse', 'HEAD') == source['commit']
               print(name + ': selected source-lock commit ' + source['commit'])
           PY
+      - name: Apply upstream Mesa patch metadata fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          patch = Path('UniXNU/patches/mesa/turnip-frame-diagnostics.patch')
+          data = patch.read_bytes()
+          assert hashlib.sha256(data).hexdigest() == '5eb8dda6e381f10fa48b62a9a497fb74a8b08c7999dea5468585c9848b2af966'
+          first, rest = data.split(b'\n', 1)
+          fixed = first + b'\nnew file mode 100644\n' + rest
+          assert hashlib.sha256(fixed).hexdigest() == 'cd15bbb8f932d564a99300e63d3d6c5a6a714b311596e80619092c5d3fa5e25a'
+          patch.write_bytes(fixed)
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
