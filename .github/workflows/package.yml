@@ -122,6 +122,11 @@ jobs:
           assert hashlib.sha256(data).hexdigest() == '6d8a717d2631920088be08614c1ba2ff6c23cf936b47762e7ab949237025b1c4'
           patch.write_bytes(data.rstrip(b'\n') + b'\n' + base64.b64decode('LS0tIGEvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKKysrIGIvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKQEAgLTI2NDEsNyArMjY0MSw3IEBACiB9CiAKIC8vLyBbYHJlYWRfcGFnZXNgXSBvbiBtYWNPUy4KLSNbY2ZnKHRhcmdldF9vcyA9ICJtYWNvcyIpXQorI1tjZmcoYW55KHRhcmdldF9vcyA9ICJtYWNvcyIsIHRhcmdldF9vcyA9ICJpb3MiKSldCiBwdWIoY3JhdGUpIGZuIHJlYWRfcGFnZXMocGFnZXM6IE5vbk51bGw8dTg+LCBpbnRvOiAmbXV0IFt1OF0pIC0+IGJvb2wgewogICAgIHVuc2FmZSBleHRlcm4gIkMiIHsKICAgICAgICAgLy8vIGA8bWFjaC9tYWNoX2luaXQuaD5gOiB0aGUgcG9ydCBvZiB0aGlzIHByb2Nlc3MncyB0YXNrLgo='))
           PY
+      - name: Extract pinned board firmware
+        run: |
+          python3 device/scripts/extract-files.py
+          python3 device/scripts/extract-files.py --section Video --check
+          test -s device/.cache/firmware/qcom/sm8550/sheng/vpu30_4v.mbn
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
