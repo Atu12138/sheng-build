@@ -135,6 +135,10 @@ jobs:
           compile(fixed, str(script), 'exec')
           script.write_bytes(fixed)
           PY
+      - name: Prepare locked Wi-Fi userspace inputs
+        run: |
+          python3 device/drivers/Ath12kWifi/tools/fetch-sources.py
+          python3 device/drivers/Ath12kWifi/tools/prepare-supplicant.py
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
