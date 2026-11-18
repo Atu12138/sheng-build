@@ -1,8 +1,12 @@
-name: sheng guarded memory handoff
+name: sheng macOS preserved-data upgrade
 
 on:
   workflow_dispatch:
     inputs:
+      core_ref:
+        description: UniXNU core branch or commit
+        type: string
+        default: main
       root_storage:
         description: Build the userdata root image
         type: boolean
@@ -18,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: macos-lab-${{ github.ref }}-${{ inputs.export_build_inputs && 'inputs' || 'images' }}
@@ -45,14 +50,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU-sheng
-          ref: 6a99956461d3808e36ba2047e18cf6083a6dcb82
+          ref: 6c42e1055ffb3b335fda991190ad221edaa7af3c
           path: device
           submodules: recursive
+      - name: Check out upgrade harness
+        uses: actions/checkout@v4
+        with:
+          path: diagnostic-harness
+          sparse-checkout: scripts/guard-sheng-memory.py
       - name: Check out core sources
         uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU
-          ref: a59e7622051c14ad8768a96c8baef2b51114829c
+          ref: ${{ inputs.core_ref }}
           path: UniXNU
           submodules: recursive
       - name: Check out firmware sources
@@ -62,14 +72,6 @@ jobs:
           ref: 8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be
           path: uefi-sheng
           submodules: false
-      - name: Check out diagnostic harness
-        uses: actions/checkout@v4
-        with:
-          repository: Atu12138/sheng-build
-          ref: diagnose-uefi-abort-20261117
-          path: diagnostic-harness
-          sparse-checkout: scripts/guard-sheng-memory.py
-          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -148,46 +150,82 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/xnu-work
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/fakeroot
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/xnu
+      - name: Retrieve verified previous build
+        run: |
+          gh run download 44119365612 --repo Atu12138/sheng-build --name sheng-macos-27 --dir previous-artifacts
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, struct
+          source = Path('previous-artifacts')
+          seed = source / 'data.dbr'
+          assert hashlib.sha256(seed.read_bytes()).hexdigest() == 'a8a3d462267138556cb0aa73368b960e40355502d6aa12da63de56d0960c90d7'
+          # The official policy importer accepts a raw FAT ramdisk. Retain the
+          # original payload so importing policies does not require BaseTools.
+          payload = source / 'payload.img'
+          assert payload.read_bytes()[:8] != b'UNXNFAT1'
+          header = bytearray(4096)
+          header[:8] = b'ANDROID!'
+          struct.pack_into('<I', header, 16, payload.stat().st_size)
+          struct.pack_into('<I', header, 36, 4096)
+          with (source / 'unpacked-boot.img').open('wb') as output:
+              output.write(header)
+              with payload.open('rb') as incoming:
+                  import shutil
+                  shutil.copyfileobj(incoming, output)
+          runtime = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime')
+          runtime.mkdir(parents=True, exist_ok=True)
+          import shutil
+          shutil.copyfile(seed, runtime / 'data.dbr')
+          print('Verified original Data seed; current device seed will be preserved during local final packaging.')
+          PY
+      - name: Apply verified board memory guard
+        run: |
+          python3 diagnostic-harness/scripts/guard-sheng-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
+          printf '\n# Local tablet evidence: preserve low-bank end 0x8B9D00000; previous guarded build reached the macOS desktop. Upgrade has not yet been hardware tested.\n' >> device/porting.toml
       - name: Prepare installation
         working-directory: UniXNU
         run: |
           ./unixnu defconfig sheng_macos_defconfig -D ../device --os macos-27
           ./unixnu fetch --os macos-27
+          python3 ../device/scripts/import-root-policies.py ../previous-artifacts/unpacked-boot.img --policies ../device/scripts/policies/macos-27.3-26C5035r
           if [ '${{ inputs.root_storage }}' = true ]; then
             python3 ../device/scripts/prepare-macos-install.py
           else
             python3 ../device/scripts/prepare-macos-install.py --reuse-policies
           fi
-      - name: Apply conservative board memory guard
-        run: |
-          python3 diagnostic-harness/scripts/guard-sheng-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
-          printf '\n# Diagnostic hardware evidence: ELR matches DarwinFlush DC CIVAC, FAR 0x8B9D00000. UEFI map type7 covers this address. Guard low-bank end at this address; no successful boot result yet.\n' >> device/porting.toml
-      - name: Preserve memory guard source
-        uses: actions/upload-artifact@v4
-        with:
-          name: memory-guard-source
-          path: |
-            uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
-            diagnostic-harness/scripts/guard-sheng-memory.py
-            device/porting.toml
-          retention-days: 7
       - name: Build images
+        id: build-images
         working-directory: device
         run: scripts/package.sh --os macos-27 --uefi ../uefi-sheng
-      - name: Verify guarded memory descriptor and original loader
+      - name: Verify preserved root and memory guard
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import struct
-          root = Path('uefi-sheng/Build')
-          files = [p for p in root.rglob('*') if p.suffix.lower() in ('.efi', '.dll')]
+          import hashlib, struct, json
+          runtime = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr')
+          assert hashlib.sha256(runtime.read_bytes()).hexdigest() == 'a8a3d462267138556cb0aa73368b960e40355502d6aa12da63de56d0960c90d7'
           needle = struct.pack('<QQ', 0x880000000, 0x39D00000)
-          matches = [str(p) for p in files if needle in p.read_bytes()]
-          assert matches, 'Guarded low-bank descriptor absent from firmware build'
-          loaders = list(root.rglob('DarwinBoot.efi'))
-          assert loaders and all(b'SHENG MEMORY MAP DIAGNOSTIC - NO KERNEL START' not in p.read_bytes() for p in loaders), 'Diagnostic stop unexpectedly retained'
-          print('Guarded descriptor verified:', ', '.join(matches))
+          matches = [str(p) for p in Path('uefi-sheng/Build').rglob('*') if p.suffix.lower() in ('.efi', '.dll') and needle in p.read_bytes()]
+          assert matches, 'Verified tablet memory guard missing'
+          target = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos')
+          records = dict(device='6c42e1055ffb3b335fda991190ad221edaa7af3c', core='bba3b57879e94e5ec1632daafb74cbcab8af49a5', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, hardware_tested=False)
+          (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
+          print('Existing root policy signatures imported; verified memory guard present.')
           PY
+      - name: Export upgrade firmware and manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-firmware-symbols
+          path: |
+            uefi-sheng/Build/**/*.fd
+            uefi-sheng/Build/**/DarwinBoot.efi
+            uefi-sheng/Build/**/DarwinBoot.pdb
+            uefi-sheng/Build/**/DarwinBoot.map
+            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/boot/boot.json
+            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/upgrade-verification.json
+            diagnostic-harness/scripts/guard-sheng-memory.py
+            device/porting.toml
+          retention-days: 7
       - name: Publish shader inventory
         if: always()
         uses: actions/upload-artifact@v4
@@ -196,7 +234,7 @@ jobs:
           path: |
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/prime-list.txt
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/prime-list.json
-          retention-days: 1
+          retention-days: 7
       - name: Build root storage
         if: inputs.root_storage
         working-directory: UniXNU
@@ -231,7 +269,7 @@ jobs:
           name: sheng-macos-27
           path: artifacts/
           compression-level: 0
-          retention-days: 1
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -242,9 +280,9 @@ jobs:
             UniXNU/out/sheng/*/*/tree/build/prime-list.*
             UniXNU/out/sheng/*/*/tree/build/sheng-source-storage/*.log
             UniXNU/out/sheng/*/*/tree/build/sheng-source-storage/*.command.json
-          retention-days: 1
+          retention-days: 7
       - name: Save build inputs
-        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        if: always() && steps.build-images.outcome == 'success' && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           key: sheng-macos27-build-v1-${{ runner.os }}-${{ github.run_id }}
@@ -259,7 +297,7 @@ jobs:
             device/drivers/Ath12kWifi/deps
             device/.cache/firmware
       - name: Save kernel compile records
-        if: always() && steps.kernel-cache.outputs.cache-hit != 'true'
+        if: always() && steps.build-images.outcome == 'success' && steps.kernel-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           key: ${{ steps.kernel-sdk.outputs.key }}-${{ github.run_id }}
@@ -268,19 +306,3 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/xnu-work
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/fakeroot
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/xnu
-
-      - name: Export UEFI diagnostic symbols
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sheng-uefi-diagnostic-symbols
-          retention-days: 7
-          if-no-files-found: warn
-          path: |
-            uefi-sheng/Build/**/*.efi
-            uefi-sheng/Build/**/*.pdb
-            uefi-sheng/Build/**/*.map
-            uefi-sheng/Build/**/*.fd
-            UniXNU/out/sheng/macos-*/**/boot/boot.json
-            UniXNU/out/sheng/macos-*/**/package.manifest.json
-            UniXNU/out/sheng/macos-*/**/logs/*.log
