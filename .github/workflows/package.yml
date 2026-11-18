@@ -118,6 +118,51 @@ jobs:
           UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/package.sh --os 27 --uefi ../uefi-sheng --init-data
+      - name: Encrypt failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > recipient.pem <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERT
+          target=UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27
+          mkdir -p diagnostics
+          if [ -d "$target/logs" ]; then cp -R "$target/logs" diagnostics/package-logs; fi
+          shopt -s nullglob
+          for log in "$target"/tree/build/adreno-metal-bridge/build-*.log; do cp "$log" diagnostics/; done
+          tar -C diagnostics -cf - . |
+            /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-ipados-diagnostics.cms recipient.pem
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: sheng-ipados-diagnostics-encrypted
+          retention-days: 3
+          if-no-files-found: ignore
+          path: sheng-ipados-diagnostics.cms
       - name: Encrypt device-specific images
         shell: bash
         run: |
