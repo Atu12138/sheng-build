@@ -1,28 +1,7 @@
-name: package
-
-# scripts/package.sh of this repository on a macOS runner, with the UniXNU and uefi-sheng
-# checkouts beside it, the layout board.toml names. The platform seed comes from the
-# repository secret UNIXNU_UNIQUE_CHIP_ID and is baked into the images, so the run's
-# artifacts belong to one device alone: download them, then delete the run.
+name: sheng iPadOS 27 build
 
 on:
   workflow_dispatch:
-    inputs:
-      os:
-        description: "OS profile of the images"
-        type: choice
-        options: ["27", "26", "17"]
-        default: "27"
-      init_data:
-        description: "Create a NEW installation seed if no saved seed exists (iPadOS 27 only)"
-        type: boolean
-        default: false
-      data_seed_url:
-        description: "Optional original data.dbr URL for an existing installation; otherwise use the saved cache"
-        type: string
-      data_seed_sha256:
-        description: "Required SHA-256 when data_seed_url is supplied"
-        type: string
 
 permissions:
   contents: read
@@ -34,111 +13,52 @@ concurrency:
 jobs:
   package:
     runs-on: macos-26
-    timeout-minutes: 360
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      UNIXNU_IPSW_JOBS: 16
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: UniXNU/UniXNU-sheng
+          ref: 6c42e1055ffb3b335fda991190ad221edaa7af3c
           path: device
           submodules: recursive
       - uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU
-          ref: 21d683dff61c66f219f03ab9d8b9249026514788 # runtime builds and graphics consumers
+          ref: 82b847c4ac3f68a57024b3082ffa3a03442defd9 # Wi-Fi runtime and Data firmware integration
           path: UniXNU
           submodules: recursive
       - uses: actions/checkout@v4
         with:
           repository: UniXNU/uefi-sheng
+          ref: b303410c8e401fc9419ae65a024356ed09a438ef
           path: uefi-sheng
           submodules: recursive
-      - name: pin the sheng SoC sources required by Bluetooth
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("device/feeds.toml")
-          text = path.read_text()
-          old = 'commit = "a9f45dc60c035084b95463781538380f4c3606c9"'
-          new = 'commit = "2dc650ca76ae38715cd0712e60a44b14fe251745"'
-          if old in text:
-              path.write_text(text.replace(old, new, 1), newline="\n")
-          elif new not in text:
-              raise SystemExit("unexpected SM8550 source pin")
-          PY
-      - name: cache Ath12kWifi sources
-        uses: actions/cache@v4
+      - uses: actions/setup-python@v5
         with:
-          path: device/drivers/Ath12kWifi/deps
-          key: ath12k-sources-${{ hashFiles('device/drivers/Ath12kWifi/tools/source-lock.json') }}
-      - name: repair Ath12kWifi sparse checkout paths
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("device/drivers/Ath12kWifi/tools/fetch-sources.py")
-          text = path.read_text()
-          old = 'subprocess.run(["git", "-C", str(directory), "sparse-checkout", "add", *source["paths"]], check=True)'
-          new = 'subprocess.run(["git", "-C", str(directory), "sparse-checkout", "add", "--skip-checks", *paths], check=True)'
-          if old in text:
-              path.write_text(text.replace(old, new, 1), newline="\n")
-          else:
-              print("sparse-checkout repair: no change needed")
-          PY
-      - name: fetch Ath12kWifi sources
-        run: device/drivers/Ath12kWifi/tools/fetch-sources.sh
-      - name: restore inputs cache
-        id: inputs-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            device/.cache/firmware
-            device/firmware/wcn7850
-          key: sheng-inputs-v2-${{ hashFiles('device/proprietary-files.txt', 'device/board.toml') }}
-          restore-keys: sheng-inputs-v2-
-      - name: stage sheng firmware
-        run: |
-          python3 - <<'PY'
-          import hashlib, pathlib, urllib.request
-          wcn = pathlib.Path('device/firmware/wcn7850')
-          wcn.mkdir(parents=True, exist_ok=True)
-          base = 'https://raw.githubusercontent.com/ianchb/sheng-firmware/ebdd6f89ee5aaa132f03860c211bdfb4294bd954/ath12k/WCN7850/hw2.0/'
-          expected = {
-              'amss.bin': '43aadfd3df887f27de74020273aee484bac6a31dd53068f91baf2a9b094d6a68',
-              'm3.bin': '0e72f44df7defc269fe92dcea25d4d409046c04b77d41c510c52879b3dfc1055',
-              'board-2.bin': '6a98237c743d864773a547e81e23f0c6dc721dcd7331926bee7381e2152e00fd',
-          }
-          for name, digest in expected.items():
-              target = wcn / name
-              if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == digest:
-                  print(f'{name}: cached')
-                  continue
-              with urllib.request.urlopen(base + name, timeout=120) as resp:
-                  data = resp.read()
-              actual = hashlib.sha256(data).hexdigest()
-              if actual != digest:
-                  raise SystemExit(f'firmware SHA-256 mismatch: {name}: {actual}')
-              target.write_bytes(data)
-              print(f'{name}: {actual} (downloaded)')
-          PY
-      - name: stage proprietary firmware
-        working-directory: device
-        run: python3 scripts/extract-files.py
-
-      - name: save inputs cache
-        if: steps.inputs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            device/.cache/firmware
-            device/firmware/wcn7850
-          key: ${{ steps.inputs-cache.outputs.cache-primary-key }}
+          python-version: "3.14"
       - name: tools
         run: |
-          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          brew install dtc llvm lld llvm@22 lld@22 openssl@3 unifdef cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
           {
             echo "$HOME/.cargo/bin"
             echo "/opt/homebrew/opt/llvm/bin"
             echo "/opt/homebrew/opt/lld/bin"
             echo "/opt/homebrew/opt/bison/bin"
           } >> "$GITHUB_PATH"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          toolchain = Path('uefi-toolchain').resolve()
+          toolchain.mkdir()
+          for name in ('clang', 'llvm-lib', 'llvm-rc', 'lld-link'):
+              package = 'lld@22' if name == 'lld-link' else 'llvm@22'
+              (toolchain / name).symlink_to(Path('/opt/homebrew/opt') / package / 'bin' / name)
+          with Path(__import__('os').environ['GITHUB_ENV']).open('a') as output:
+              output.write('CLANG_BIN=' + str(toolchain) + '/\n')
+          PYTHON
           rustup toolchain install 1.98.0 --profile minimal --component rust-src
           # Fail fast, naming the tool, before forty minutes of build.
           ok=1
@@ -158,86 +78,82 @@ jobs:
             echo 'Set the repository secret UNIXNU_UNIQUE_CHIP_ID: the platform seed of the device, 8 hex digits.' >&2
             exit 1
           fi
-      - name: seed cache identity
-        id: seed-key
-        env:
-          SEED: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+      - name: Select locked Wi-Fi source revisions
         run: |
           python3 - <<'PY'
-          import hashlib, os
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write('key=data-seed-v1-' + hashlib.sha256(os.environ['SEED'].encode()).hexdigest()[:16] + '\n')
+          from pathlib import Path
+          import json, subprocess
+          root = Path('device/drivers/Ath12kWifi')
+          lock = json.loads((root / 'tools/source-lock.json').read_text())
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              paths = [value.strip('/') for value in source['paths']]
+              directory = root / 'deps' / name
+              directory.parent.mkdir(parents=True, exist_ok=True)
+              if not directory.exists():
+                  directory.mkdir()
+                  git(directory, 'init')
+                  git(directory, 'remote', 'add', 'origin', source['url'])
+                  git(directory, 'sparse-checkout', 'init', '--cone')
+              else:
+                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *paths).splitlines()
+                  changes = [path for path in changes if not path.startswith('include/uapi/linux/netfilter')]
+                  if changes:
+                      raise SystemExit(name + ': refusing to replace modified imported sources')
+              git(directory, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', source['commit'])
+              git(directory, 'checkout', '--detach', source['commit'])
+              git(directory, 'sparse-checkout', 'add', '--skip-checks', *paths)
+              assert git(directory, 'rev-parse', 'HEAD') == source['commit']
+              print(name + ': selected source-lock commit ' + source['commit'])
           PY
-      - uses: actions/cache/restore@v4
-        id: data-cache
-        if: inputs.os == '27'
-        with:
-          path: |
-            UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/data.dbr
-            UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/inputs.json
-          key: ${{ steps.seed-key.outputs.key }}-${{ inputs.os }}
-      - name: prepare preserved Data seed
-        if: inputs.os == '27'
-        env:
-          INIT_DATA: ${{ inputs.init_data }}
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, urllib.request
-          inputs = json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']
-          path = pathlib.Path('UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/data.dbr')
-          url, digest = inputs.get('data_seed_url', ''), inputs.get('data_seed_sha256', '').lower()
-          if url:
-              print('::add-mask::' + url)
-              if not url.startswith('https://') or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
-                  raise SystemExit('A seed URL requires HTTPS and its SHA-256')
-              with urllib.request.urlopen(url, timeout=120) as source:
-                  data = source.read(64 * 1024 * 1024 + 1)
-              if len(data) > 64 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != digest:
-                  raise SystemExit('Seed size or SHA-256 mismatch')
-              if path.exists() and path.read_bytes() != data:
-                  raise SystemExit('Saved seed differs; preserve and inspect it instead of replacing this installation')
-              path.parent.mkdir(parents=True, exist_ok=True)
-              path.write_bytes(data)
-          if not path.is_file() and os.environ['INIT_DATA'] != 'true':
-              raise SystemExit('No saved seed. Supply the ORIGINAL seed for an existing installation, or select init_data for a FIRST installation')
-          PY
-      - name: package
+      - name: Build iPadOS 27.0.1
         working-directory: device
         env:
           UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-          INIT_DATA: ${{ inputs.init_data }}
-          OS_PROFILE: ${{ inputs.os }}
+        run: scripts/package.sh --os 27 --uefi ../uefi-sheng --init-data
+      - name: Encrypt device-specific images
+        shell: bash
         run: |
-          args=(--os "$OS_PROFILE" --uefi ../uefi-sheng)
-          if [ "$OS_PROFILE" = 27 ] && [ "$INIT_DATA" = true ]; then
-            args+=(--init-data)
-          fi
-          scripts/package.sh "${args[@]}"
-      - uses: actions/cache/save@v4
-        if: always() && inputs.os == '27' && steps.data-cache.outputs.cache-hit != 'true' && hashFiles('UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/data.dbr') != ''
+          set -euo pipefail
+          cat > recipient.pem <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERT
+          target=UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27
+          tar -C "$target" -cf - boot/boot.img payload/payload.img kernel/kernel.macho package.manifest.json runtime/data.dbr |
+            /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-ipados-27.cms recipient.pem
+          shasum -a 256 sheng-ipados-27.cms > sheng-ipados-27.cms.sha256
+      - uses: actions/upload-artifact@v4
         with:
-          path: |
-            UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/data.dbr
-            UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/inputs.json
-          key: ${{ steps.seed-key.outputs.key }}-${{ inputs.os }}
-      - name: installation seed backup
-        if: always() && inputs.os == '27' && hashFiles('UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27/runtime/data.dbr') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: installation-seed-${{ inputs.os }}
-          retention-days: 1
-          path: |
-            UniXNU/out/sheng/*/*/runtime/data.dbr
-            UniXNU/out/sheng/*/*/runtime/inputs.json
-      - name: images
-        uses: actions/upload-artifact@v4
-        with:
-          name: images-${{ inputs.os }}
-          retention-days: 1
+          name: sheng-ipados-27-encrypted
+          retention-days: 3
+          compression-level: 0
           if-no-files-found: error
           path: |
-            UniXNU/out/sheng/*/*/boot/boot.img
-            UniXNU/out/sheng/*/*/payload/payload.img
-            UniXNU/out/sheng/*/*/kernel/kernel.macho
-            UniXNU/out/sheng/*/*/package.manifest.json
+            sheng-ipados-27.cms
+            sheng-ipados-27.cms.sha256
