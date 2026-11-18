@@ -152,6 +152,20 @@ jobs:
           assert 'QcomGeniSpi' in tomllib.loads(fixed)['components']['include']
           path.write_text(fixed)
           PY
+      - name: Scope the clamshell diagnostic to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          path = Path('device/package/KeyboardProbe.cpp')
+          original = path.read_bytes()
+          assert hashlib.sha256(original).hexdigest() == '30e36264f7b693994721a92b33d827b49436744db9c0f5b20583ab9462c95c9b'
+          line = base64.b64decode('c3RhdGljIGNvbnN0IGNoYXIga0NsYW1zaGVsbExvZ1tdIEtFWUJPQVJEX0NPTlNUID0gInNoZW5nIGtleWJvYXJkOiBjbGFtc2hlbGwgJXMgc2VudCB0byB0aGUgcG93ZXIgbWFuYWdlclxuIjsK')
+          assert original.count(line) == 1
+          fixed = original.replace(line, b'#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX\n' + line + b'#endif\n')
+          assert hashlib.sha256(fixed).hexdigest() == 'c8928a961118064fc34388e8fc78396799acdc0d4c3cc47921a36bc89988d10b'
+          path.write_bytes(fixed)
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
