@@ -112,6 +112,16 @@ jobs:
         run: |
           python3 device/drivers/Ath12kWifi/tools/fetch-sources.py
           python3 device/drivers/Ath12kWifi/tools/prepare-supplicant.py
+      - name: Enable the Mach page reader for iPadOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          patch = Path('UniXNU/drivers/AdrenoMetal/bridge/patches/0063-main-optimizations-on-development-46e7cc96.patch')
+          data = patch.read_bytes()
+          assert hashlib.sha256(data).hexdigest() == '6d8a717d2631920088be08614c1ba2ff6c23cf936b47762e7ab949237025b1c4'
+          patch.write_bytes(data.rstrip(b'\n') + b'\n' + base64.b64decode('LS0tIGEvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKKysrIGIvY3JhdGVzL21ldGFsMnZ1bGthbi1ydW50aW1lL3NyYy9jb3BpZWQucnMKQEAgLTI2NDEsNyArMjY0MSw3IEBACiB9CiAKIC8vLyBbYHJlYWRfcGFnZXNgXSBvbiBtYWNPUy4KLSNbY2ZnKHRhcmdldF9vcyA9ICJtYWNvcyIpXQorI1tjZmcoYW55KHRhcmdldF9vcyA9ICJtYWNvcyIsIHRhcmdldF9vcyA9ICJpb3MiKSldCiBwdWIoY3JhdGUpIGZuIHJlYWRfcGFnZXMocGFnZXM6IE5vbk51bGw8dTg+LCBpbnRvOiAmbXV0IFt1OF0pIC0+IGJvb2wgewogICAgIHVuc2FmZSBleHRlcm4gIkMiIHsKICAgICAgICAgLy8vIGA8bWFjaC9tYWNoX2luaXQuaD5gOiB0aGUgcG9ydCBvZiB0aGlzIHByb2Nlc3MncyB0YXNrLgo='))
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
