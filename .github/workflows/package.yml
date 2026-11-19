@@ -218,6 +218,24 @@ jobs:
               assert hashlib.sha256((device / name).read_bytes()).hexdigest() == digest, name
           print('Verified runtime allocations from sheng community commit 9b0fdfd')
           PY
+      - name: Bind the iPadOS USB interrupt-context function
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, subprocess
+          kit = Path('UniXNU/kits/XnuPrelink')
+          revision = subprocess.check_output(['git', '-C', str(kit), 'rev-parse', 'HEAD'], text=True).strip()
+          assert revision == '440589b0c31625f17edf363e24b3c82c51c70bb9', revision
+          fixture = kit / 'fixtures/fileset-24A446-symbols.json'
+          original = fixture.read_bytes()
+          assert hashlib.sha256(original).hexdigest() == '026fb497af4d9bc3afc28b6a22be3210ba52ae0c4b5193ce9b34a4b72792b5d8'
+          symbols = json.loads(original)
+          record = {'original': '0xfffffe000aec5fac', 'original_size': 52, 'original_sha256': '392c95f5d1bfc12d57b6fbd680d3630e803ff30d70dcc69e9ea12f0be46fb53b', 'native_symbol': '_ml_at_interrupt_context', 'evidence': '24A446 AppleUSBXHCI chained fixup 0xfffffe00084368e8 targets this function. It reads DAIF, then returns whether per-CPU interrupt state is nonnull when interrupts are masked, matching ml_at_interrupt_context in XNU osfmk/arm/machine_routines_common.c. The same relocated slot in two historical sheng iPadOS collections points to the named native function.'}
+          assert not any(item['original'] == record['original'] for item in symbols['functions'])
+          symbols['functions'].append(record)
+          fixture.write_text(json.dumps(symbols, indent=2) + '\n')
+          print('Added verified iPadOS USB binding:', record['original'], record['native_symbol'])
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
@@ -258,6 +276,7 @@ jobs:
           target=UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27
           mkdir -p diagnostics
           if [ -d "$target/logs" ]; then cp -R "$target/logs" diagnostics/package-logs; fi
+          if [ -f "$target/kernel/kernel.failed.json" ]; then cp "$target/kernel/kernel.failed.json" diagnostics/; fi
           shopt -s nullglob
           for log in "$target"/tree/build/adreno-metal-bridge/build-*.log; do cp "$log" diagnostics/; done
           tar -C diagnostics -cf - . |
