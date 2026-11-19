@@ -188,6 +188,22 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Verified all four patched kernel source files')
           PY
+      - name: Optimize iPadOS board driver code size
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          for name, before, edits, after in [('build-ath12k-wifi.py', 'f1b5c9d604f5e5685832f8af9f97f15d7afd0e40c39b4203ff2e2344cb11894c', [("'-mkernel', '-O2',", "'-mkernel', ('-Os' if '-apple-ios' in TRIPLE else '-O2'),")], '87256fa156652c6a736860036db044183dcea4b860300c374711fc425ca47941'), ('build-gop-legacy-display-27.py', '0681663cf1a7c5ffc784aa83d4ccff7972054e0572626f7a5a04f617850914de', [("    run(cmd, cwd=r['directory'])\n\n\ndef compile_c", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=r['directory'])\n\n\ndef compile_c"), ("    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp")], '0c439867977e82e6d1f2943f52c22fe5d155b9649c0554b17a156378d66af0c5')]:
+              script = Path('device/scripts') / name
+              text = script.read_text()
+              assert hashlib.sha256(text.encode()).hexdigest() == before
+              for old, new in edits:
+                  assert text.count(old) == 1
+                  text = text.replace(old, new, 1)
+              assert hashlib.sha256(text.encode()).hexdigest() == after
+              compile(text, str(script), 'exec')
+              script.write_text(text)
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
