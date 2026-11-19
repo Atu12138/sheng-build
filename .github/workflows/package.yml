@@ -113,12 +113,44 @@ jobs:
               assert git(directory, 'rev-parse', 'HEAD') == source['commit']
               print(name + ': selected source-lock commit ' + source['commit'])
           PY
+      - name: Generate a new iPadOS 17 Data seed
+        working-directory: UniXNU
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, runpy, subprocess, sys, tempfile
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from unixnu.cli import parser
+          from unixnu.config import Context
+          from unixnu.ipsw import Ipsw
+          from unixnu.runtime import seed_uuid
+
+          ctx = Context(parser().parse_args(['build', 'userdata', '-D', '../device', '--os', '17']))
+          assert ctx.work.parent.name == 'ipados-17.7.11-21H461'
+          image = Ipsw(ctx).disk_image('OS')
+          seed = ctx.work / 'data-seed/data.dbr'
+          mount_os = runpy.run_path('scripts/build-boot-runtime.py')['os_mount']
+          with tempfile.TemporaryDirectory(prefix='sheng17-os-') as directory:
+              with mount_os(image, Path(directory)) as mount:
+                  subprocess.run([sys.executable, 'scripts/make-data-seed.py', str(mount), str(seed),
+                                  '--build', '21H461', '--gib', '32'], check=True)
+          identity = seed_uuid(Path.cwd(), seed)
+          config = ctx.device / 'configs' / ctx.config_name
+          updated, count = re.subn(r'^CONFIG_XNU_OWNER_DATA_VOLUME_UUID=.*$',
+                                   f'CONFIG_XNU_OWNER_DATA_VOLUME_UUID="{identity}"',
+                                   config.read_text(), flags=re.MULTILINE)
+          assert count == 1
+          config.write_text(updated)
+          PY
       - name: Build iPadOS 17.7.11 with official packaging
         working-directory: device
         env:
           UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/package.sh --os 17 --uefi ../uefi-sheng
+        run: >-
+          scripts/package.sh --os 17 --uefi ../uefi-sheng
+          --data-ramdisk ../UniXNU/out/sheng/ipados-17.7.11-21H461/sheng/data-seed/data.dbr
       - name: Encrypt failure diagnostics
         if: failure()
         shell: bash
@@ -196,7 +228,7 @@ jobs:
           -----END CERTIFICATE-----
           CERT
           target=UniXNU/out/sheng/ipados-17.7.11-21H461/sheng
-          tar -C "$target" -cf - boot/boot.img payload/payload.img kernel/kernel.macho package.manifest.json |
+          tar -C "$target" -cf - boot/boot.img payload/payload.img kernel/kernel.macho package.manifest.json data-seed/data.dbr |
             /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-ipados-17.cms recipient.pem
           shasum -a 256 sheng-ipados-17.cms > sheng-ipados-17.cms.sha256
       - uses: actions/upload-artifact@v4
