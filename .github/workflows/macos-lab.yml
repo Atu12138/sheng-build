@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU-sheng
-          ref: 6c42e1055ffb3b335fda991190ad221edaa7af3c
+          ref: c8f92b208068eeaa4cd2b0f592671f04ee70076e
           path: device
           submodules: recursive
       - name: Check out upgrade harness
@@ -91,7 +91,6 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/adreno-metal-bridge
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/m2v-target
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/mesa-tu-macos27
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr
             device/drivers/Ath12kWifi/deps
             device/.cache/firmware
       - name: Refresh pinned translator checkout
@@ -155,7 +154,7 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/xnu
       - name: Retrieve verified previous build
         run: |
-          gh run download 44119365612 --repo Atu12138/sheng-build --name sheng-macos-27 --dir previous-artifacts
+          gh run download 44226926804 --repo Atu12138/sheng-build --name sheng-macos-27 --dir previous-artifacts
           python3 - <<'PY'
           from pathlib import Path
           import hashlib, struct
@@ -235,78 +234,104 @@ jobs:
           for name in ('OS', 'SystemOS', 'App'):
               directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
               assert (directory / 'manifest.header.bin').read_bytes() == base64.b64decode(installed['signed_headers'][name])
-          records = dict(device='6c42e1055ffb3b335fda991190ad221edaa7af3c', core='bba3b57879e94e5ec1632daafb74cbcab8af49a5', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
+          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY
-      - name: Export upgrade firmware and manifests
-        uses: actions/upload-artifact@v4
-        with:
-          name: upgrade-firmware-symbols
-          path: |
-            uefi-sheng/Build/**/*.fd
-            uefi-sheng/Build/**/DarwinBoot.efi
-            uefi-sheng/Build/**/DarwinBoot.pdb
-            uefi-sheng/Build/**/DarwinBoot.map
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/boot/boot.json
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/upgrade-verification.json
-            diagnostic-harness/scripts/guard-sheng-memory.py
-            device/porting.toml
-          retention-days: 7
-      - name: Publish shader inventory
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: shader-inventory
-          path: |
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/prime-list.txt
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/prime-list.json
-          retention-days: 7
-      - name: Build root storage
-        if: inputs.root_storage
-        working-directory: UniXNU
+      - name: Seal the verified macOS images
         run: |
-          python3 - <<'PY'
-          import subprocess, sys
-          sys.path.insert(0, 'scripts')
-          from unixnu.cli import parser
-          from unixnu.config import Context
-          ctx = Context(parser().parse_args(['build', 'userdata', '-D', '../device', '--os', 'macos-27']))
-          objects = []
-          for window in ctx.board['userdata']['windows']:
-              name = window['name']
-              objects += ['--object', f'{name}.vroot={ctx.tree}/build/verified-root-{name}/hashes.bin']
-          subprocess.run(['./unixnu', 'build', 'userdata', '--os', 'macos-27', *objects], check=True)
-          PY
-      - name: Stage device artifacts
-        env:
-          BUILD_ROOT_STORAGE: ${{ inputs.root_storage }}
-        run: |
+          set -euo pipefail
           mkdir artifacts
           target=UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos
-          cp "$target/boot/boot.img" "$target/payload/payload.img" "$target/kernel/kernel.macho" "$target/package.manifest.json" artifacts/
-          cp "$target/runtime/data.dbr" artifacts/
-          cp "$target/tree/build/prime-list.txt" "$target/tree/build/prime-list.json" artifacts/
-          if [ "$BUILD_ROOT_STORAGE" = true ]; then
-            cp "$target/userdata/userdata-root.json" artifacts/
-            zstd -T0 -3 --sparse "$target/userdata/userdata-root.img" -o artifacts/userdata-root.img.zst
-          fi
+          cp "$target/boot/boot.img" "$target/boot/boot.json" "$target/payload/payload.img" "$target/kernel/kernel.macho" "$target/package.manifest.json" "$target/upgrade-verification.json" "$target/runtime/data.dbr" artifacts/
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, shutil
+          metadata = json.loads(Path('artifacts/boot.json').read_text())
+          fds = [p for p in Path('uefi-sheng/Build').rglob('SILICIUM_UEFI.fd')
+                 if hashlib.sha256(p.read_bytes()).hexdigest() == metadata['fd_sha256']]
+          assert fds, 'No firmware matching the boot metadata'
+          shutil.copyfile(fds[0], 'artifacts/SILICIUM_UEFI.fd')
+          PY
+          cat > recipient.pem <<'CERTIFICATE'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERTIFICATE
+          tar -C artifacts -cf - . | /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-macos-27.cms recipient.pem
+          shasum -a 256 sheng-macos-27.cms > sheng-macos-27.cms.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: sheng-macos-27
-          path: artifacts/
+          name: sheng-macos-27-encrypted
+          path: |
+            sheng-macos-27.cms
+            sheng-macos-27.cms.sha256
           compression-level: 0
           retention-days: 7
+      - name: Seal failure logs
+        if: failure()
+        run: |
+          set -euo pipefail
+          mkdir failure-logs
+          target=UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos
+          if [ -d "$target/logs" ]; then cp -R "$target/logs" failure-logs/; fi
+          for log in "$target"/tree/build/adreno-metal-bridge/build-*.log; do
+            if [ -f "$log" ]; then cp "$log" failure-logs/; fi
+          done
+          cat > recipient.pem <<'CERTIFICATE'
+          -----BEGIN CERTIFICATE-----
+          MIIEGzCCAoOgAwIBAgIUXpL6XgTawbh1EIu89eSu18jHxdAwDQYJKoZIhvcNAQEL
+          BQAwHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxkMB4XDTI2MTExODAzNDYx
+          OVoXDTI3MDIxNjAzNDYxOVowHTEbMBkGA1UEAwwSc2hlbmctaVBhZE9TLWJ1aWxk
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA4JAT1fiEW8mYNAmuCc+5
+          gAWjLbIFxdmbTOqXn7QXfxPNxMfEw4ZN6Le1/9p5lZ1OQCRqbrZENH/YTh6MCiL+
+          lVWeyf24P72jgdet7iESnQL9gC9V5K8COWh9CIgDSuGOqy874zE7MP0F/0EEHaEr
+          yZHvmlUU7GVKq4CJxnlJbKIJzyXbKPZPN3MOA1kHGVbCxJ7wFVx6HfwPd3TzDJoR
+          Tx+GjK0peQSqm+taFNjqVB7dlV2/jRKTunK+sdXmra1q36mFMuJovqR1YBiGb2qn
+          VWV7zmGAnSM5tKHwtfeXQPO4o13MmRoq2UnBwoKFbNw6XTPdbQEUtcBXPi7E8hJV
+          dcWMmYDONA/Ul87Rn2IawKICLHs05fK/r/SMWibgksfAiF0/bdakWypW5FsOV2Jw
+          Ob2MdPblEMmtWIJgccuq6WQve2qcU60M+LoHvVh634T2oiTveQAL4ggogOTHhcfl
+          W5hoWbFxO8lryiS9srjQgoZ/CorkErQlj+QtGQKKOjuNAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTKYyS1a4BWnD+p14zq7V+p1h4QiTAfBgNVHSMEGDAWgBTKYyS1a4BWnD+p
+          14zq7V+p1h4QiTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBi
+          jjRo/U48ICWe+fNdniFqBqwwpnxj5y8pieWzmWqJsXeuimu+a3iy9kDKWZI6GiGc
+          pxCsQrcrxx3c2y3xQ02SSvNP1DDb0jexfu4GUVbJ0SHvkAs6ykZ8DbBaiyYPg5pz
+          y9XPwYonuxA3hpSO3+4oBnC24nC3wT1cqMHW66Jf2L0whlrKMRxHMUp4E5j0PChp
+          OSLAcrUCzKUitlXPpKYKeOWO5NaAGEPeb8N1fKJ7rXrNgPgENTRTVCTP9fRy4tuG
+          J3iJxhXRUE5GZhXOlkxRJg/dZO/AS+4fg2XMIKKPeqfDUPXFxBs+Fa+6oXhbJ6Eq
+          NvmRafWZw41q6whCZkJ9q6v8jFPrFWU4kNsq/UIrMxTqarYg7QMws3uRtgX7CQ7+
+          kN6+/FoAmIA5Hq+pD9MEv+Mi5/6Ktw6V3jzqYmoJrMfmIhMkhwvQzIU1iUXr+Ljk
+          C+PyDW5BiTlLrC57uUCJCzC8piMHO9h7mL1b7PbChp8uKD3rpEgJMRkxOeBkmAw=
+          -----END CERTIFICATE-----
+          CERTIFICATE
+          tar -C failure-logs -cf - . | /opt/homebrew/opt/openssl@3/bin/openssl cms -encrypt -binary -stream -aes256 -outform DER -out sheng-macos-failure.cms recipient.pem
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: build-logs
-          path: |
-            UniXNU/out/sheng/*/*/logs/*.log
-            UniXNU/out/sheng/*/*/tree/build/adreno-metal-bridge/build-*.log
-            UniXNU/out/sheng/*/*/tree/build/prime-list.*
-            UniXNU/out/sheng/*/*/tree/build/sheng-source-storage/*.log
-            UniXNU/out/sheng/*/*/tree/build/sheng-source-storage/*.command.json
+          name: sheng-macos-failure-encrypted
+          path: sheng-macos-failure.cms
+          compression-level: 0
           retention-days: 7
       - name: Save build inputs
         if: always() && steps.build-images.outcome == 'success' && steps.build-cache.outputs.cache-hit != 'true'
@@ -320,7 +345,6 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/adreno-metal-bridge
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/m2v-target
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/mesa-tu-macos27
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr
             device/drivers/Ath12kWifi/deps
             device/.cache/firmware
       - name: Save kernel compile records
