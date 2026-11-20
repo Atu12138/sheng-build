@@ -18,6 +18,8 @@ def replace(text, old, new, count=1):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
+    parser.add_argument('--core', type=Path, required=True)
+    parser.add_argument('--device', type=Path, required=True)
     args = parser.parse_args()
     data = args.source.read_bytes()
     if hashlib.sha256(data).hexdigest() != SOURCE_SHA256:
@@ -47,7 +49,21 @@ def main():
                      '''  // The tablet previously faulted at 0x8b9d00000. Retain the measured gap.
   if (!ShengCut (Free, &FreeCount, (SHENG_RAM_RANGE){0x8b9d00000ULL, 0x8b9f00000ULL}) ||
       !ShengCut (Free, &FreeCount, (SHENG_RAM_RANGE){0xd0000000, 0xd0010000}) ||''')
+    # XNU's outside-memory support only adopts banks below its main window.
+    # Therefore the 4 GiB extension belongs inside the existing high window.
+    window = args.core / 'drivers/DarwinBoot/DarwinBootPkg/Driver/WindowSize.h'
+    window_text = replace(window.read_text(), 'size <= 0x200000000ULL', 'size <= 0x280000000ULL')
+    generator = args.core / 'scripts/unixnu/devicetree.py'
+    generator_text = replace(generator.read_text(), 'size <= 0x200000000', 'size <= 0x280000000')
+    generator_text = replace(generator_text, 'to 8 GiB in 2 MiB steps', 'to 10 GiB in 2 MiB steps')
+    board = args.device / 'board.toml'
+    board_text = replace(board.read_text(), '"owned_memory_size" = "0x180000000"', '"owned_memory_size" = "0x280000000"')
+    board_text = replace(board_text, 'The 6 GiB bootstrap window spans the high bank.',
+                         'The 10 GiB bootstrap window spans the measured high banks.')
     args.source.write_text(source)
+    window.write_text(window_text)
+    generator.write_text(generator_text)
+    board.write_text(board_text)
     print('Enabled the measured 12 GiB DDR range while retaining the low-bank guard and FDT reservations.')
     print('Updated memory map source SHA-256:', hashlib.sha256(source.encode()).hexdigest())
 

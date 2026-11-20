@@ -155,7 +155,7 @@ jobs:
       - name: Set independent macOS storage and measured DDR topology
         run: |
           python3 diagnostic-harness/scripts/prepare-macos-dual-storage.py device
-          python3 diagnostic-harness/scripts/prepare-sheng-12g-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
+          python3 diagnostic-harness/scripts/prepare-sheng-12g-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c --core UniXNU --device device
       - name: Select locked Wi-Fi source revisions
         run: |
           python3 - <<'PY'
@@ -236,6 +236,11 @@ jobs:
           assert b'no unixnu partition' in (target / 'kernel/kernel.macho').read_bytes()
           memory = Path('uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c')
           assert '0xb00000000ULL' in memory.read_text()
+          adt = Path('dual-verify.adt')
+          import subprocess
+          subprocess.run(['mcopy', '-i', str(target / 'payload/payload.img'), '::/EFI/UniXNU/Payloads/kernel.macho.adt', str(adt)], check=True)
+          prop = b'darwinboot-memory-size'.ljust(32, bytes(1)) + struct.pack('<IQ', 8, 0x280000000)
+          assert prop in adt.read_bytes(), '10 GiB high window missing from the packaged ADT'
           assert key in (target / 'kernel/kernel.macho').read_bytes(), 'Compiled kernel does not trust the current installed root'
           for name in ('OS', 'SystemOS', 'App'):
               directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
