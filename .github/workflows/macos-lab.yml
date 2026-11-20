@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+      - name: Fetch the Data packing module
+        working-directory: UniXNU
+        run: git submodule update --init --depth 1 drivers/DarwinBoot
       - name: Install image tools
         run: brew install openssl@3 blacktop/tap/ipsw
       - name: Build a 40 GiB Data seed for local password provisioning
@@ -37,6 +40,7 @@ jobs:
         run: |
           python3 - <<'PYTHON'
           import json
+          import os
           import secrets
           import subprocess
           import sys
@@ -52,7 +56,7 @@ jobs:
           subprocess.run(['sudo', sys.executable, str(Path('scripts/make-macos-data-seed.py').resolve()),
                           str(source), str(seed), '--gib', '40', '--skip-setup', '--user-stdin'],
                          input=json.dumps(account).encode(), check=True)
-          subprocess.run(['sudo', 'chown', str(__import__('os').getuid()), str(seed)], check=True)
+          subprocess.run(['sudo', 'chown', str(os.getuid()), str(seed)], check=True)
           PYTHON
       - name: Encrypt result for this workstation
         env:
