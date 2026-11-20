@@ -155,7 +155,7 @@ jobs:
       - name: Set independent macOS storage and measured DDR topology
         run: |
           python3 diagnostic-harness/scripts/prepare-macos-dual-storage.py device
-          python3 diagnostic-harness/scripts/prepare-sheng-12g-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c --core UniXNU --device device
+          python3 diagnostic-harness/scripts/prepare-sheng-12g-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c --core UniXNU --device device --high-only
       - name: Select locked Wi-Fi source revisions
         run: |
           python3 - <<'PY'
@@ -245,7 +245,7 @@ jobs:
           for name in ('OS', 'SystemOS', 'App'):
               directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
               assert (directory / 'manifest.header.bin').read_bytes() == base64.b64decode(installed['signed_headers'][name])
-          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
+          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, bootstrap_4k_pages=24, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY
