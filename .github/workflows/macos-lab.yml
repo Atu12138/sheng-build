@@ -1,4 +1,4 @@
-name: sheng macOS preserved-data upgrade
+name: sheng macOS dual system and 12 GiB
 
 on:
   workflow_dispatch:
@@ -44,7 +44,6 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: 1
       GITHUB_TOKEN: ${{ github.token }}
       UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
-      UNIXNU_LAB_PASSWORD: ${{ secrets.UNIXNU_LAB_PASSWORD }}
     steps:
       - name: Check out device sources
         uses: actions/checkout@v4
@@ -58,7 +57,8 @@ jobs:
         with:
           path: diagnostic-harness
           sparse-checkout: |
-            scripts/guard-sheng-memory.py
+            scripts/prepare-sheng-12g-memory.py
+            scripts/prepare-macos-dual-storage.py
             scripts/installed-root-policy.json
             scripts/import-installed-root-policy.py
       - name: Check out core sources
@@ -152,25 +152,10 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/xnu-work
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/.cache/fakeroot
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/xnu
-      - name: Retrieve verified previous build
+      - name: Set independent macOS storage and measured DDR topology
         run: |
-          gh run download 44226926804 --repo Atu12138/sheng-build --name sheng-macos-27 --dir previous-artifacts
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib, struct
-          source = Path('previous-artifacts')
-          seed = source / 'data.dbr'
-          assert hashlib.sha256(seed.read_bytes()).hexdigest() == 'a8a3d462267138556cb0aa73368b960e40355502d6aa12da63de56d0960c90d7'
-          runtime = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime')
-          runtime.mkdir(parents=True, exist_ok=True)
-          import shutil
-          shutil.copyfile(seed, runtime / 'data.dbr')
-          print('Verified original Data seed; current device seed will be preserved during local final packaging.')
-          PY
-      - name: Apply verified board memory guard
-        run: |
-          python3 diagnostic-harness/scripts/guard-sheng-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
-          printf '\n# Local tablet evidence: preserve low-bank end 0x8B9D00000; previous guarded build reached the macOS desktop. Upgrade has not yet been hardware tested.\n' >> device/porting.toml
+          python3 diagnostic-harness/scripts/prepare-macos-dual-storage.py device
+          python3 diagnostic-harness/scripts/prepare-sheng-12g-memory.py uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c
       - name: Select locked Wi-Fi source revisions
         run: |
           python3 - <<'PY'
@@ -206,6 +191,20 @@ jobs:
         run: |
           ./unixnu defconfig sheng_macos_defconfig -D ../device --os macos-27
           ./unixnu fetch --os macos-27
+          PYTHONPATH=scripts python3 - <<'PYTHON'
+          import json, os, secrets, subprocess, sys
+          from pathlib import Path
+          from unixnu.cli import parser
+          from unixnu.config import Context
+          from unixnu.ipsw import Ipsw
+          ctx = Context(parser().parse_args(['build', 'kernel', '-D', '../device', '--os', 'macos-27']))
+          seed = ctx.work / 'runtime/data.dbr'
+          seed.parent.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['sudo', sys.executable, str(Path('scripts/make-macos-data-seed.py').resolve()),
+                          str(Ipsw(ctx).disk_image('OS')), str(seed), '--gib', '40', '--skip-setup', '--user-stdin'],
+                         input=json.dumps({'name': 'unixnu', 'password': secrets.token_urlsafe(24)}).encode(), check=True)
+          subprocess.run(['sudo', 'chown', str(os.getuid()), str(seed)], check=True)
+          PYTHON
           python3 ../diagnostic-harness/scripts/import-installed-root-policy.py ../diagnostic-harness/scripts/installed-root-policy.json ../device/scripts/policies/macos-27.3-26C5035r
           if [ '${{ inputs.root_storage }}' = true ]; then
             python3 ../device/scripts/prepare-macos-install.py
@@ -216,13 +215,17 @@ jobs:
         id: build-images
         working-directory: device
         run: scripts/package.sh --os macos-27 --uefi ../uefi-sheng
-      - name: Verify preserved root and memory guard
+      - name: Verify isolated storage and root policy
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import hashlib, struct, json
           runtime = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr')
-          assert hashlib.sha256(runtime.read_bytes()).hexdigest() == 'a8a3d462267138556cb0aa73368b960e40355502d6aa12da63de56d0960c90d7'
+          import sys
+          sys.path.insert(0, 'UniXNU/drivers/DarwinBoot/Test')
+          import packed_ramdisk
+          logical, _ = packed_ramdisk.regions(runtime.read_bytes())
+          assert logical == 40 * 1024**3
           needle = struct.pack('<QQ', 0x880000000, 0x39D00000)
           matches = [str(p) for p in Path('uefi-sheng/Build').rglob('*') if p.suffix.lower() in ('.efi', '.dll') and needle in p.read_bytes()]
           assert matches, 'Verified tablet memory guard missing'
@@ -230,11 +233,14 @@ jobs:
           import base64
           installed = json.loads(Path('diagnostic-harness/scripts/installed-root-policy.json').read_text())
           key = base64.b64decode(installed['public_key_base64'])
+          assert b'no unixnu partition' in (target / 'kernel/kernel.macho').read_bytes()
+          memory = Path('uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c')
+          assert '0xb00000000ULL' in memory.read_text()
           assert key in (target / 'kernel/kernel.macho').read_bytes(), 'Compiled kernel does not trust the current installed root'
           for name in ('OS', 'SystemOS', 'App'):
               directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
               assert (directory / 'manifest.header.bin').read_bytes() == base64.b64decode(installed['signed_headers'][name])
-          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
+          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY
@@ -283,7 +289,7 @@ jobs:
           shasum -a 256 sheng-macos-27.cms > sheng-macos-27.cms.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: sheng-macos-27-encrypted
+          name: sheng-macos-dual-12g-encrypted
           path: |
             sheng-macos-27.cms
             sheng-macos-27.cms.sha256
