@@ -1,4 +1,4 @@
-name: sheng macOS dual system and 12 GiB
+name: sheng macOS dual system and 12 GiB - November Metal
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
       core_ref:
         description: UniXNU core branch or commit
         type: string
-        default: main
+        default: e7bddb9a7eecdcf81f36da9fa38bd9d4d3f155c2
       root_storage:
         description: Build the userdata root image
         type: boolean
-        default: true
+        default: false
       export_build_inputs:
         description: Export cached XNU objects and the SDK for a local build
         type: boolean
@@ -201,7 +201,8 @@ jobs:
           seed = ctx.work / 'runtime/data.dbr'
           seed.parent.mkdir(parents=True, exist_ok=True)
           subprocess.run(['sudo', sys.executable, str(Path('scripts/make-macos-data-seed.py').resolve()),
-                          str(Ipsw(ctx).disk_image('OS')), str(seed), '--gib', '40', '--skip-setup', '--user-stdin'],
+                          str(Ipsw(ctx).disk_image('OS')), str(seed), '--gib', '40', '--skip-setup', '--user-stdin',
+                           '--volume-uuid', '8C6BD031-9218-4FE6-9055-BDA9AED1D0EA'],
                          input=json.dumps({'name': 'unixnu', 'password': secrets.token_urlsafe(24)}).encode(), check=True)
           subprocess.run(['sudo', 'chown', str(os.getuid()), str(seed)], check=True)
           PYTHON
@@ -245,7 +246,12 @@ jobs:
           for name in ('OS', 'SystemOS', 'App'):
               directory = Path('device/scripts/policies/macos-27.3-26C5035r') / name
               assert (directory / 'manifest.header.bin').read_bytes() == base64.b64decode(installed['signed_headers'][name])
-          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core='519d80242a5028ee123447b01bc3b809baed565f', firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, bootstrap_4k_pages=24, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
+          manifest = json.loads((target / 'package.manifest.json').read_text())
+          revisions = manifest['revisions']
+          assert revisions['driver:Adreno740'] == '2962e289c9690aeb668072c170679e6fb28bf8de'
+          assert revisions['driver:AdrenoMetal'] == 'b25e48e51dfdf4b3889ede6e701ab7dd59929a03'
+          assert manifest['runtime']['data_volume_uuid'].upper() == '8C6BD031-9218-4FE6-9055-BDA9AED1D0EA'
+          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core=revisions['package:main'], firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, bootstrap_4k_pages=24, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY
