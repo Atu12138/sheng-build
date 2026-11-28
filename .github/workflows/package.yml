@@ -40,7 +40,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: build-harness
-          sparse-checkout: scripts/prepare-sheng-12g-memory.py
+          sparse-checkout: |
+            scripts/prepare-sheng-12g-memory.py
+            scripts/ipados27-provider-guards.patch
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
@@ -213,6 +215,26 @@ jobs:
           subprocess.run(['git', 'apply', '-'], input=base64.b64decode('LS0tIGEvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKKysrIGIvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKQEAgLTU0LDcgKzU0LDkgQEAKIAogbmFtZXNwYWNlIHsKIGNvbnN0ZXhwciB1aW50MzJfdCBrSW8gPSAweDQsIGtJbnRyQ2ZnID0gMHg4LCBrSW50clN0YXR1cyA9IDB4YzsKKyNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogY29uc3RleHByIElPT3B0aW9uQml0cyBrV2FrZUV2ZW50U291cmNlID0gMHgxOyAgIC8vIGtJT1BNV2FrZUV2ZW50U291cmNlIChJT1BNUHJpdmF0ZS5oKQorI2VuZGlmCiAKIElPTWVtb3J5TWFwICpnVGxtbU1hcDsKIHVpbnRwdHJfdCBnVGxtbTsKQEAgLTExNCw2ICsxMTYsNyBAQAogCiBjb25zdCBhcm1jcHVfc2xlZXBfYm9hcmQgZ0JvYXJkID0ge3ByZXBhcmUsIHNob3VsZFdha2UsIHJlc3RvcmUsIGtXYWtlU3Bpcywgc2l6ZW9mIGtXYWtlU3BpcyAvIHNpemVvZiBrV2FrZVNwaXNbMF0sIHRpY2ssIDEwfTsKIAorI2lmIGRlZmluZWQoWE5VX1RBUkdFVF9PU19PU1gpICYmIFhOVV9UQVJHRVRfT1NfT1NYCiAvLyBUaGUgd2FrZSBzb3VyY2VzIGEgc2xlZXAgY2FuIGNvdW50IG9uOiB0aGUga2V5Ym9hcmQgcHJvYmUgcGFzdCBpdHMgaW50ZXJydXB0IHN0ZXAgKHN0YWdlIDUgYW5kIG9uKSBob2xkcyB0aGUgVExNTSBzdW1tYXJ5LCB0aGUKIC8vIGJ1dHRvbnMgYXJtZWQgKHN0YWdlIDMpIGhvbGQgdGhlIFNQTUkgbGluZS4KIGJvb2wgbGlkQXJtZWQoKSB7cmV0dXJuICZuYXRpdmVfa2V5Ym9hcmRfc3RhdHMgJiYgbmF0aXZlX2tleWJvYXJkX3N0YXRzWzBdID49IDU7fQpAQCAtMTI0LDcgKzEyNyw2IEBACiAgICAgcmV0dXJuIGh6ID8gdGlja3MgLyAoaHogLyAxMDAwKSA6IDA7CiB9CiAKLSNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogSU9SZXR1cm4gc2xlZXBXYWtlKHZvaWQgKiwgdm9pZCAqLCBuYXR1cmFsX3QgbWVzc2FnZSwgSU9TZXJ2aWNlICosIHZvaWQgKiwgdm1fc2l6ZV90KSB7CiAgICAgSU9QTXJvb3REb21haW4gKnJvb3QgPSBJT1NlcnZpY2U6OmdldFBNUm9vdERvbWFpbigpOwogICAgIHN3aXRjaCAobWVzc2FnZSkgewo='), check=True)
           assert hashlib.sha256(path.read_bytes()).hexdigest() == '45ae20e250cbc9ba553fa525e01669fdca23968e0c31c663c685668bdf7c815d'
           PY
+      - name: Limit link references to iPadOS providers
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib
+          import subprocess
+
+          for name, digest in {'device/package/LegacyDisplayProbe.cpp': 'ace25719d26936ea829fa99806c86506b264f186d357faa034c1e32ba0e060a8', 'UniXNU/drivers/RamBlock/NativeRamBlock.cpp': '772d47a069c50c9bf92f6c9292668340e005a61d996651033d9af2b6474b897c', 'device/package/BootDiagExport.c': 'a291b61587a4226b469e1f8987cbb0e146b7691c3f657c75d99ee60b979e1713'}.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+          subprocess.run(["git", "apply", "--check", "build-harness/scripts/ipados27-provider-guards.patch"], check=True)
+          subprocess.run(["git", "apply", "build-harness/scripts/ipados27-provider-guards.patch"], check=True)
+          p = Path("device/package/BootDiagExport.c")
+          s = p.read_text()
+          start = "// Read-only telemetry for SoftwareAES hardware-key selectors"
+          end = "extern void native_wifi_logf"
+          assert s.count(start) == s.count(end) == 1
+          begin, finish = s.index(start), s.index(end)
+          gate = "#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX\n"
+          p.write_text(s[:begin] + gate + s[begin:finish] + "#endif\n\n" + s[finish:])
+          PYTHON
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:

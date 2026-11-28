@@ -1,0 +1,84 @@
+--- a/device/package/LegacyDisplayProbe.cpp
++++ b/device/package/LegacyDisplayProbe.cpp
+@@ -143,8 +143,14 @@
+     native_legacy_rej_surface[4]=stride;native_legacy_rej_surface[5]=allocation;native_legacy_rej_surface[6]=bytes;
+ }
+ // The display's request layout (rectangles, masks, options, dimensions, surfaces); the iPadOS 17 one when the display has none.
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+ extern "C" const unsigned native_legacy_request_layout[6] __attribute__((weak_import));
++#endif
+ static void recordRejectedSwap(unsigned reason,const void *request,const void *surface) {
++#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000
++    (void)request;
++    native_legacy_rej_reason=reason;
++#else
+     const unsigned char *bytes=reinterpret_cast<const unsigned char *>(request);
+     if(!bytes)return;
+     static const unsigned ios17[6]={17,81,792,804,816,2624};
+@@ -158,6 +164,7 @@
+     const unsigned rectOffsets[2]={layout[0],layout[1]};
+     for(unsigned r=0;r<2;++r){uint32_t rect[4]={};memcpy(rect,bytes+rectOffsets[r],sizeof(rect));
+         for(unsigned i=0;i<4;++i)native_legacy_rej_rects[r][i]=rect[i];}
++#endif
+     char name[32]={};
+     if(surface){const OSObject *object=reinterpret_cast<const OSObject *>(surface);
+         const OSMetaClass *meta=object->getMetaClass();const char *cls=meta?meta->getClassName():nullptr;
+@@ -532,8 +539,10 @@
+ extern void sheng_wifi_probe(void);
+ extern void sheng_bluetooth_probe(void) __attribute__((weak_import));
+ extern void sheng_usb_probe(void) __attribute__((weak_import));
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+ extern "C" void sheng_ethernet_probe(void) __attribute__((weak_import));   // macOS builds only (ShengEthernet.cpp)
+ extern "C" void sheng_software_aes_probe(void) __attribute__((weak_import));   // macOS builds only (SoftwareAesProbe.cpp)
++#endif
+ extern void sheng_adsp_probe(void);
+ extern void sheng_battery_probe(void);
+ extern void sheng_audio_probe(void);
+@@ -617,8 +626,10 @@
+ 
+ void native_legacy_display_late_probe(void) {
+     {thread_t thread = nullptr; if (kernel_thread_start(busyReport, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);}
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+     // First: AppleImage4's start already waits for an IOAESAccelerator, holding its expert lock (SoftwareAesProbe.cpp).
+     if (sheng_software_aes_probe) sheng_software_aes_probe();
++#endif
+     native_keystore_probe();
+     sheng_cpufreq_probe();
+     if (sheng_thermal_probe) sheng_thermal_probe();
+@@ -631,7 +642,9 @@
+     sheng_wifi_probe();
+     if (sheng_bluetooth_probe) sheng_bluetooth_probe();
+     if (sheng_usb_probe) sheng_usb_probe();
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+     if (sheng_ethernet_probe) sheng_ethernet_probe();
++#endif
+     sheng_adsp_probe();
+     sheng_battery_probe();
+     sheng_audio_probe();
+--- a/UniXNU/drivers/RamBlock/NativeRamBlock.cpp
++++ b/UniXNU/drivers/RamBlock/NativeRamBlock.cpp
+@@ -24,7 +24,9 @@
+ extern "C" {
+ extern unsigned long gPhysBase, gPhysSize;
+ // The kernel's release of loader memory (payload-addon-release.patch); absent in a kernel without it.
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+ bool ml_static_mfree_prepare(vm_offset_t, vm_size_t) __attribute__((weak_import));
++#endif
+ void IODTFreeLoaderInfo(const char *, void *, int);
+ int native_ram_block_volume_device(const char *, dev_t *, char *, size_t);
+ volatile uint32_t native_ram_block_ready = 0;
+@@ -408,12 +410,14 @@
+   // A packed seed was copied page by page into this disk's own memory and hashed from there: nothing reads the loader's
+   // copy again. With boot-payload-release=1 its whole pages go back to the VM the way XNU returns loader memory, and the
+   // range leaves the registry's /chosen/memory-map, so a second start finds no seed instead of freed memory.
++#if !(defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 270000)
+   uint32_t release = 0;
+   if (packedInput && !memory && PE_parse_boot_argn("boot-payload-release", &release, sizeof release) && release == 1 &&
+       ml_static_mfree_prepare && bytes <= INT32_MAX && ml_static_mfree_prepare(ml_static_ptovirt(physical), bytes)) {
+     IODTFreeLoaderInfo("PackedRAMDisk", reinterpret_cast<void *>(physical), static_cast<int>(bytes));
+     native_ram_block_seed_released = static_cast<uint32_t>(bytes >> 12);
+   }
++#endif
+   memcpy(native_ram_block_seed_sha256,seedHash,32);
+   native_ram_block_bytes = logical;
+   native_ram_block_sparse=(sparse.pages||isBig)?1:0;
