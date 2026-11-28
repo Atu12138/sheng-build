@@ -6,7 +6,7 @@ on:
       core_ref:
         description: UniXNU core branch or commit
         type: string
-        default: e7bddb9a7eecdcf81f36da9fa38bd9d4d3f155c2
+        default: fdf81eaa832ce5c850d3c53c698407aa722a4653
       root_storage:
         description: Build the userdata root image
         type: boolean
@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: UniXNU/UniXNU-sheng
-          ref: c8f92b208068eeaa4cd2b0f592671f04ee70076e
+          ref: 993f6bdd2c0eb01181f69a25a302eb6eed1e4059
           path: device
           submodules: recursive
       - name: Check out upgrade harness
@@ -249,9 +249,9 @@ jobs:
           manifest = json.loads((target / 'package.manifest.json').read_text())
           revisions = manifest['revisions']
           assert revisions['driver:Adreno740'] == '2962e289c9690aeb668072c170679e6fb28bf8de'
-          assert revisions['driver:AdrenoMetal'] == 'b25e48e51dfdf4b3889ede6e701ab7dd59929a03'
+          assert revisions['driver:AdrenoMetal'] == '85832c3afdbc289f95b1939cd47ef8c33d87d0d5'
           assert manifest['runtime']['data_volume_uuid'].upper() == '8C6BD031-9218-4FE6-9055-BDA9AED1D0EA'
-          records = dict(device='c8f92b208068eeaa4cd2b0f592671f04ee70076e', core=revisions['package:main'], firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, bootstrap_4k_pages=24, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
+          records = dict(device='993f6bdd2c0eb01181f69a25a302eb6eed1e4059', core=revisions['package:main'], firmware='8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be', memory_guard=matches, target_ddr_gib=12, root_partition='unixnu', target_partition_gib=64, data_gib=40, bootstrap_4k_pages=24, root_disk_reused=True, root_signing_key_sha256=installed['public_key_sha256'], hardware_tested=False)
           (target / 'upgrade-verification.json').write_text(json.dumps(records, indent=2)+'\n')
           print('Existing root policy signatures imported; verified memory guard present.')
           PY

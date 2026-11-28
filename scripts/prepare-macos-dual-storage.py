@@ -7,8 +7,8 @@ import subprocess
 import tomllib
 
 
-DEVICE_REV = 'c8f92b208068eeaa4cd2b0f592671f04ee70076e'
-UFS_REV = '9d527ae1a8d36a7ff210f9f4c9b429549c34c991'
+DEVICE_REV = '993f6bdd2c0eb01181f69a25a302eb6eed1e4059'
+UFS_REV = '02a67a796f0ce193e48ad7a6de286db0ac256793'
 OS = 'macos-27.3-26C5035r'
 PARTITION = 'unixnu'
 PARTITION_GIB = 64
