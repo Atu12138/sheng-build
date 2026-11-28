@@ -115,6 +115,40 @@ jobs:
           assert source.count(old) == 1
           path.write_text(source.replace(old, new))
           PYTHON
+      - name: Select locked Wi-Fi source revisions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          root = Path('device/drivers/Ath12kWifi')
+          lock = json.loads((root / 'tools/source-lock.json').read_text())
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              paths = [value.strip('/') for value in source['paths']]
+              directory = root / 'deps' / name
+              directory.parent.mkdir(parents=True, exist_ok=True)
+              if not directory.exists():
+                  directory.mkdir()
+                  git(directory, 'init')
+                  git(directory, 'remote', 'add', 'origin', source['url'])
+                  git(directory, 'sparse-checkout', 'init', '--cone')
+              else:
+                  changes = git(directory, 'diff', '--name-only', 'HEAD', '--', *paths).splitlines()
+                  changes = [path for path in changes if not path.startswith('include/uapi/linux/netfilter')]
+                  if changes:
+                      raise SystemExit(name + ': refusing to replace modified imported sources')
+              git(directory, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', source['commit'])
+              git(directory, 'checkout', '--detach', source['commit'])
+              git(directory, 'sparse-checkout', 'add', '--skip-checks', *paths)
+              assert git(directory, 'rev-parse', 'HEAD') == source['commit']
+              print(name + ': selected source-lock commit ' + source['commit'])
+          PY
+      - name: Prepare locked Wi-Fi userspace inputs
+        run: |
+          python3 device/drivers/Ath12kWifi/tools/fetch-sources.py
+          python3 device/drivers/Ath12kWifi/tools/prepare-supplicant.py
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
