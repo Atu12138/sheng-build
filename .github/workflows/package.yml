@@ -244,7 +244,7 @@ jobs:
           import json
           import subprocess
 
-          changes = {'build-ath12k-wifi.py': [("'-mkernel', '-O2',", "'-mkernel', ('-Os' if '-apple-ios' in TRIPLE else '-O2'),")], 'build-gop-legacy-display-27.py': [("    run(cmd, cwd=r['directory'])\n\n\ndef compile_c", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=r['directory'])\n\n\ndef compile_c"), ("    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp")]}
+          changes = {'build-ath12k-wifi.py': [("'-mkernel', '-O2',", "'-mkernel', ('-Oz' if '-apple-ios' in TRIPLE else '-O2'),")], 'build-gop-legacy-display-27.py': [("    run(cmd, cwd=r['directory'])\n\n\ndef compile_c", "    if not MACOS:\n        cmd.append('-Oz')\n    run(cmd, cwd=r['directory'])\n\n\ndef compile_c"), ("    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp", "    if not MACOS:\n        cmd.append('-Oz')\n    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp")]}
           for filename, edits in changes.items():
               path = Path("device/scripts") / filename
               source = path.read_text()
