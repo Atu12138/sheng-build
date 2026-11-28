@@ -43,6 +43,7 @@ jobs:
           sparse-checkout: |
             scripts/prepare-sheng-12g-memory.py
             scripts/ipados27-provider-guards.patch
+            scripts/ipados27-runtime-allocations.patch
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
@@ -234,6 +235,44 @@ jobs:
           begin, finish = s.index(start), s.index(end)
           gate = "#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX\n"
           p.write_text(s[:begin] + gate + s[begin:finish] + "#endif\n\n" + s[finish:])
+          PYTHON
+      - name: Fit iPadOS native code and data into the prelink window
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib
+          import json
+          import subprocess
+
+          changes = {'build-ath12k-wifi.py': [("'-mkernel', '-O2',", "'-mkernel', ('-Os' if '-apple-ios' in TRIPLE else '-O2'),")], 'build-gop-legacy-display-27.py': [("    run(cmd, cwd=r['directory'])\n\n\ndef compile_c", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=r['directory'])\n\n\ndef compile_c"), ("    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp", "    if not MACOS:\n        cmd.append('-Os')\n    run(cmd, cwd=rc['directory'])\n\n\ncompile_cpp")]}
+          for filename, edits in changes.items():
+              path = Path("device/scripts") / filename
+              source = path.read_text()
+              for old, new in edits:
+                  assert source.count(old) == 1, (filename, old)
+                  source = source.replace(old, new)
+              compile(source, str(path), "exec")
+              path.write_text(source)
+
+          patch = str(Path("build-harness/scripts/ipados27-runtime-allocations.patch").resolve())
+          subprocess.run(["git", "apply", "--check", patch], cwd="device", check=True)
+          subprocess.run(["git", "apply", patch], cwd="device", check=True)
+
+          fixture = Path("UniXNU/kits/XnuPrelink/fixtures/fileset-24A446-symbols.json")
+          before = fixture.read_bytes()
+          assert hashlib.sha256(before).hexdigest() == '026fb497af4d9bc3afc28b6a22be3210ba52ae0c4b5193ce9b34a4b72792b5d8'
+          symbols = json.loads(before)
+          record = {'original': '0xfffffe000aec5fac', 'original_size': 52, 'original_sha256': '392c95f5d1bfc12d57b6fbd680d3630e803ff30d70dcc69e9ea12f0be46fb53b', 'native_symbol': '_ml_at_interrupt_context', 'evidence': '24A446 AppleUSBXHCI chained fixup 0xfffffe00084368e8 targets this function. It reads DAIF, then returns whether per-CPU interrupt state is nonnull when interrupts are masked, matching ml_at_interrupt_context in XNU osfmk/arm/machine_routines_common.c. The same relocated slot in two historical sheng iPadOS collections points to the named native function.'}
+          assert not any(item["original"] == record["original"] for item in symbols["functions"])
+          symbols["functions"].append(record)
+          fixture.write_text(json.dumps(symbols, indent=2) + "\n")
+
+          layout = Path("UniXNU/kits/XnuPrelink/fileset_layout.py")
+          source = layout.read_text()
+          old = "raise ValueError('Native code would collide with collection data')"
+          new = "raise ValueError(f'Native code would collide with collection data: end={code_end:#x}, limit={self.roots[\"__DATA\"][\"va\"]:#x}')"
+          assert source.count(old) == 1
+          layout.write_text(source.replace(old, new))
           PYTHON
       - name: Build iPadOS 27.0.1
         working-directory: device
