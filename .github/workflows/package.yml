@@ -94,6 +94,27 @@ jobs:
               assert actual == revision, (component, actual)
           print("Metal2Vulkan", translator["commit"])
           PYTHON
+      - name: Scope Metal render-target barriers to supported SDKs
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib
+          path = Path("UniXNU/drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm")
+          before = path.read_bytes()
+          assert hashlib.sha256(before).hexdigest() == "8a35a950c5454bd2411a974c7ecbf9db1ae5f3fd7a3878715db132b40f499c2c"
+          source = before.decode()
+          include = "#import <Metal/Metal.h>"
+          assert source.count(include) == 1
+          source = source.replace(include, include + "\n#import <TargetConditionals.h>")
+          old = " if(scope&~(MTLBarrierScopeBuffers|MTLBarrierScopeTextures|MTLBarrierScopeRenderTargets)) {"
+          new = ''' NSUInteger validScopes = MTLBarrierScopeBuffers | MTLBarrierScopeTextures;
+          #if TARGET_OS_OSX || TARGET_OS_MACCATALYST
+           validScopes |= MTLBarrierScopeRenderTargets;
+          #endif
+           if (scope & ~validScopes) {'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PYTHON
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
