@@ -222,7 +222,7 @@ jobs:
           import hashlib
           import subprocess
 
-          for name, digest in {'device/package/LegacyDisplayProbe.cpp': 'ace25719d26936ea829fa99806c86506b264f186d357faa034c1e32ba0e060a8', 'UniXNU/drivers/RamBlock/NativeRamBlock.cpp': '772d47a069c50c9bf92f6c9292668340e005a61d996651033d9af2b6474b897c', 'device/package/BootDiagExport.c': 'a291b61587a4226b469e1f8987cbb0e146b7691c3f657c75d99ee60b979e1713'}.items():
+          for name, digest in {'device/package/LegacyDisplayProbe.cpp': 'ace25719d26936ea829fa99806c86506b264f186d357faa034c1e32ba0e060a8', 'UniXNU/drivers/RamBlock/NativeRamBlock.cpp': '772d47a069c50c9bf92f6c9292668340e005a61d996651033d9af2b6474b897c', 'device/package/BootDiagExport.c': 'a291b61587a4226b469e1f8987cbb0e146b7691c3f657c75d99ee60b979e1713', 'device/package/BootLog.c': '8e7b9b03ee6b0fcb5df2afa73b4e512cfc7d9ffae7a72ad3c1800f61bd9303e9', 'UniXNU/drivers/Adreno740/NativeAdrenoPublish.cpp': '03067df65b0b21f9327778b634e5672acdba7712c94bacaf0b56288fb91e85de'}.items():
               assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
           subprocess.run(["git", "apply", "--check", "build-harness/scripts/ipados27-provider-guards.patch"], check=True)
           subprocess.run(["git", "apply", "build-harness/scripts/ipados27-provider-guards.patch"], check=True)
