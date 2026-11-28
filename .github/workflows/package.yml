@@ -164,6 +164,55 @@ jobs:
           python3 build-harness/scripts/prepare-sheng-12g-memory.py \
             uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c \
             --core UniXNU --device device --high-only --ipados27
+      - name: Match startup diagnostics to the iPadOS XNU layout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          patch = Path('device/patches/xnu-12377/sheng-startup-failure-log.patch')
+          assert hashlib.sha256(patch.read_bytes()).hexdigest() == '8de0a88adb005b92ec6f52846fc13d6776b97c99f348688c17c3db75ee7877f3'
+          patch.write_bytes(base64.b64decode('ZGlmZiAtLWdpdCBhL2JzZC9rZXJuL2tlcm5fZXhlYy5jIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKLS0tIGEvYnNkL2tlcm4va2Vybl9leGVjLmMKKysrIGIvYnNkL2tlcm4va2Vybl9leGVjLmMKQEAgLTkzNDksNiArOTM0OSw4IEBACiAjaWYgZGVmaW5lZChYTlVfT1dORVJfREFUQV9NT1VOVCkgJiYgWE5VX09XTkVSX0RBVEFfTU9VTlQKIAlib290X3Byb2dyZXNzX3N0YWdlKCJEYXRhIG1vdW50IGVudGVyIik7CiAJaW50IGRhdGFfZXJyb3IgPSBuYXRpdmVfb3duZXJfZGF0YV9wcmVwYXJlKHAsICh1c2VyX2FkZHJfdClzY3JhdGNoX2FkZHIpOworCWV4dGVybiB2b2lkIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KGNvbnN0IGNoYXIgKiwgaW50KSBfX2F0dHJpYnV0ZV9fKCh3ZWFrX2ltcG9ydCkpOworCWlmICgmYm9vdF9sb2dfc3RhcnR1cF9yZXN1bHQpIGJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KCJEYXRhIG1vdW50IHJldHVybmVkIiwgZGF0YV9lcnJvcik7CiAJYm9vdF9wcm9ncmVzc19zdGFnZSgiRGF0YSBtb3VudCByZXR1cm5lZCIpOwogCWlmIChkYXRhX2Vycm9yKSBwYW5pYygib2ZmbGluZSBzY3JhdGNoIERhdGEgbW91bnQgZmFpbGVkOiAlZCIsIGRhdGFfZXJyb3IpOwogI2lmIGRlZmluZWQoWE5VX0JPT1RfUFJPR1JFU1MpICYmIFhOVV9CT09UX1BST0dSRVNTCkBAIC05MzYxLDE0ICs5MzYzLDE4IEBACiAJLyogV2l0aG91dCBCb290UHJvZ3Jlc3MgKGlQYWRPUyAyNyk6IHRoZSBzYW1lIGxhdW5jaGQgam9iIHBvbGljeSwgZnJvbSB0aGUgc291cmNlIHN0b3JhZ2UgYXJjaGl2ZS4gKi8KIAlleHRlcm4gaW50IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHZvaWQgKiwgdWludDY0X3QpIF9fYXR0cmlidXRlX18oKHdlYWtfaW1wb3J0KSk7CiAJaWYgKHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KSB7CisJCWJvb3RfcHJvZ3Jlc3Nfc3RhZ2UoImxhdW5jaCBwb2xpY3kgZW50ZXIiKTsKIAkJaW50IHBvbGljeV9lcnJvciA9IHNoZW5nX2Jvb3Rfd2F0Y2hkb2dfcG9saWN5KHAsICh1aW50NjRfdClzY3JhdGNoX2FkZHIpOworCQlpZiAoJmJvb3RfbG9nX3N0YXJ0dXBfcmVzdWx0KSBib290X2xvZ19zdGFydHVwX3Jlc3VsdCgibGF1bmNoIHBvbGljeSByZXR1cm5lZCIsIHBvbGljeV9lcnJvcik7CiAJCS8qIEEgZnVsbCBvciB1bndyaXRhYmxlIERhdGEgdm9sdW1lIChFTk9TUEMpIG9ubHkgbG9zZXMgdGhlIGpvYiBwb2xpY3k6IGJvb3Qgb24gaW5zdGVhZCBvZiBhIHBhbmljLiAqLwogCQlpZiAocG9saWN5X2Vycm9yKSBwcmludGYoInNoZW5nIHdhdGNoZG9nIGxhdW5jaCBwb2xpY3kgZmFpbGVkOiAlZCAoY29udGludWluZylcbiIsIHBvbGljeV9lcnJvcik7CiAJfQogI2VuZGlmCiAjZW5kaWYKICNpZiBDT05GSUdfTUVNT1JZU1RBVFVTCisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCBlbnRlciIpOwogCSh2b2lkKSBtZW1vcnlzdGF0dXNfaW5pdF9hdF9ib290X3NuYXBzaG90KCk7CisJYm9vdF9wcm9ncmVzc19zdGFnZSgiYm9vdCBzbmFwc2hvdCByZXR1cm5lZCIpOwogI2VuZGlmIC8qIENPTkZJR19NRU1PUllTVEFUVVMgKi8KIAogI2lmIChERUJVRyB8fCBERVZFTE9QTUVOVCkgJiYgZGVmaW5lZChYTlVfTkFUSVZFX0FJUl9JTklUKSAmJiBYTlVfTkFUSVZFX0FJUl9JTklUCmRpZmYgLS1naXQgYS9vc2Ztay9rZXJuL2RlYnVnLmMgYi9vc2Ztay9rZXJuL2RlYnVnLmMKLS0tIGEvb3NmbWsva2Vybi9kZWJ1Zy5jCisrKyBiL29zZm1rL2tlcm4vZGVidWcuYwpAQCAtMTI1Miw2ICsxMjUyLDkgQEAKICAgICB1aW50NjRfdCBwYW5pY19vcHRpb25zX21hc2ssIHZvaWQgKnBhbmljX2RhdGFfcHRyLCB1bnNpZ25lZCBsb25nIHBhbmljX2NhbGxlciwgY29uc3QgY2hhciAqcGFuaWNfaW5pdGlhdG9yKQogewogI3ByYWdtYSBjbGFuZyBkaWFnbm9zdGljIHBvcAorCWV4dGVybiB2b2lkIGJvb3RfbG9nX3BhbmljX3JlY29yZChjb25zdCBjaGFyICosIHZhX2xpc3QgKiwgdW5zaWduZWQgbG9uZykgX19hdHRyaWJ1dGVfXygod2Vha19pbXBvcnQpKTsKKwlpZiAoJmJvb3RfbG9nX3BhbmljX3JlY29yZCkgYm9vdF9sb2dfcGFuaWNfcmVjb3JkKHBhbmljX2Zvcm1hdF9zdHIsIHBhbmljX2FyZ3MsIHBhbmljX2NhbGxlcik7CisKIAogI2lmIGRlZmluZWQoX194ODZfNjRfXykgJiYgKERFVkVMT1BNRU5UIHx8IERFQlVHKQogCXJlYWRfbGJyKCk7Cg=='))
+          PY
+      - name: Select the touch SPI component
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          path = Path('device/board.toml')
+          text = path.read_text()
+          first = text.index('["components"]')
+          last = text.index('\n\n', first)
+          section = text[first:last]
+          assert tomllib.loads(section)['components']['include'].count('ShengUfs') == 1
+          assert 'QcomGeniSpi' not in section
+          fixed = text[:first] + section.replace('"ShengUfs"', '"ShengUfs", "QcomGeniSpi"', 1) + text[last:]
+          assert 'QcomGeniSpi' in tomllib.loads(fixed)['components']['include']
+          path.write_text(fixed)
+          PY
+      - name: Scope the clamshell diagnostic to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          path = Path('device/package/KeyboardProbe.cpp')
+          original = path.read_bytes()
+          assert hashlib.sha256(original).hexdigest() == '1adfe809adcbf53e25e45bdbdf8fb6c2d1e41afb7b4700ffbbc08ded0bb9c1c6'
+          line = base64.b64decode('c3RhdGljIGNvbnN0IGNoYXIga0NsYW1zaGVsbExvZ1tdIEtFWUJPQVJEX0NPTlNUID0gInNoZW5nIGtleWJvYXJkOiBjbGFtc2hlbGwgJXMgc2VudCB0byB0aGUgcG93ZXIgbWFuYWdlclxuIjsK')
+          assert original.count(line) == 1
+          fixed = original.replace(line, b'#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX\n' + line + b'#endif\n')
+          assert hashlib.sha256(fixed).hexdigest() == '2691fc50383df7f0383abbcd38c5bb96137b916aee404ca2e28d866fa778d78c'
+          path.write_bytes(fixed)
+          PY
+      - name: Scope sleep diagnostics to macOS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, subprocess
+          path = Path('device/package/ShengSleep.cpp')
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == 'bc6bdedc360cf1acb82b30d5c28cb809bb58d92eeedc66d67dcbeda68cb23547'
+          subprocess.run(['git', 'apply', '-'], input=base64.b64decode('LS0tIGEvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKKysrIGIvZGV2aWNlL3BhY2thZ2UvU2hlbmdTbGVlcC5jcHAKQEAgLTU0LDcgKzU0LDkgQEAKIAogbmFtZXNwYWNlIHsKIGNvbnN0ZXhwciB1aW50MzJfdCBrSW8gPSAweDQsIGtJbnRyQ2ZnID0gMHg4LCBrSW50clN0YXR1cyA9IDB4YzsKKyNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogY29uc3RleHByIElPT3B0aW9uQml0cyBrV2FrZUV2ZW50U291cmNlID0gMHgxOyAgIC8vIGtJT1BNV2FrZUV2ZW50U291cmNlIChJT1BNUHJpdmF0ZS5oKQorI2VuZGlmCiAKIElPTWVtb3J5TWFwICpnVGxtbU1hcDsKIHVpbnRwdHJfdCBnVGxtbTsKQEAgLTExNCw2ICsxMTYsNyBAQAogCiBjb25zdCBhcm1jcHVfc2xlZXBfYm9hcmQgZ0JvYXJkID0ge3ByZXBhcmUsIHNob3VsZFdha2UsIHJlc3RvcmUsIGtXYWtlU3Bpcywgc2l6ZW9mIGtXYWtlU3BpcyAvIHNpemVvZiBrV2FrZVNwaXNbMF0sIHRpY2ssIDEwfTsKIAorI2lmIGRlZmluZWQoWE5VX1RBUkdFVF9PU19PU1gpICYmIFhOVV9UQVJHRVRfT1NfT1NYCiAvLyBUaGUgd2FrZSBzb3VyY2VzIGEgc2xlZXAgY2FuIGNvdW50IG9uOiB0aGUga2V5Ym9hcmQgcHJvYmUgcGFzdCBpdHMgaW50ZXJydXB0IHN0ZXAgKHN0YWdlIDUgYW5kIG9uKSBob2xkcyB0aGUgVExNTSBzdW1tYXJ5LCB0aGUKIC8vIGJ1dHRvbnMgYXJtZWQgKHN0YWdlIDMpIGhvbGQgdGhlIFNQTUkgbGluZS4KIGJvb2wgbGlkQXJtZWQoKSB7cmV0dXJuICZuYXRpdmVfa2V5Ym9hcmRfc3RhdHMgJiYgbmF0aXZlX2tleWJvYXJkX3N0YXRzWzBdID49IDU7fQpAQCAtMTI0LDcgKzEyNyw2IEBACiAgICAgcmV0dXJuIGh6ID8gdGlja3MgLyAoaHogLyAxMDAwKSA6IDA7CiB9CiAKLSNpZiBkZWZpbmVkKFhOVV9UQVJHRVRfT1NfT1NYKSAmJiBYTlVfVEFSR0VUX09TX09TWAogSU9SZXR1cm4gc2xlZXBXYWtlKHZvaWQgKiwgdm9pZCAqLCBuYXR1cmFsX3QgbWVzc2FnZSwgSU9TZXJ2aWNlICosIHZvaWQgKiwgdm1fc2l6ZV90KSB7CiAgICAgSU9QTXJvb3REb21haW4gKnJvb3QgPSBJT1NlcnZpY2U6OmdldFBNUm9vdERvbWFpbigpOwogICAgIHN3aXRjaCAobWVzc2FnZSkgewo='), check=True)
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == '45ae20e250cbc9ba553fa525e01669fdca23968e0c31c663c685668bdf7c815d'
+          PY
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
