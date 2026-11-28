@@ -274,6 +274,31 @@ jobs:
           assert source.count(old) == 1
           layout.write_text(source.replace(old, new))
           PYTHON
+      - name: Confine iPadOS storage to the existing unixnu partition
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import tomllib
+
+          driver = Path("device/drivers/ShengUfs")
+          revision = subprocess.check_output(["git", "-C", driver, "rev-parse", "HEAD"], text=True).strip()
+          assert revision == "02a67a796f0ce193e48ad7a6de286db0ac256793"
+
+          def replace_once(path, old, new):
+              source = path.read_text()
+              assert source.count(old) == 1, (path, old)
+              path.write_text(source.replace(old, new))
+
+          replace_once(driver / "RootLayout.h",
+                       'static const char wanted[] = "userdata";',
+                       'static const char wanted[] = "unixnu";')
+          replace_once(driver / "RootLayout.h", '"no userdata partition"', '"no unixnu partition"')
+          board = Path("device/board.toml")
+          replace_once(board, "data_gib = 215", "data_gib = 40")
+          assert tomllib.loads(board.read_text())["payload"]["runtime"]["data_gib"] == 40
+          assert 15753805824 + 41 * 1024**3 < 64 * 1024**3
+          PYTHON
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
@@ -293,6 +318,13 @@ jobs:
           window = b"darwinboot-memory-size".ljust(32, bytes(1)) + struct.pack("<IQ", 8, 0x280000000)
           assert output.read_bytes().count(window) == 1, "Wrong iPadOS boot memory window"
           print("Verified 10 GiB boot window in the packaged iPadOS ADT")
+          import sys
+          sys.path.insert(0, "UniXNU/drivers/DarwinBoot/Test")
+          import packed_ramdisk
+          logical, _ = packed_ramdisk.regions((target / "runtime/data.dbr").read_bytes())
+          assert logical == 40 * 1024**3, "Unexpected packed Data size"
+          assert b"no unixnu partition" in (target / "kernel/kernel.macho").read_bytes()
+          print("Verified unixnu partition selection and 40 GiB Data seed")
           PYTHON
       - name: Encrypt failure diagnostics
         if: failure()
