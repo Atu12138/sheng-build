@@ -34,9 +34,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: UniXNU/uefi-sheng
-          ref: e64b4c8390b8c723a2035866e37e8d414f536b1a
+          ref: 8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be
           path: uefi-sheng
-          submodules: recursive
+          submodules: false
+      - uses: actions/checkout@v4
+        with:
+          path: build-harness
+          sparse-checkout: scripts/prepare-sheng-12g-memory.py
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -149,12 +154,36 @@ jobs:
         run: |
           python3 device/drivers/Ath12kWifi/tools/fetch-sources.py
           python3 device/drivers/Ath12kWifi/tools/prepare-supplicant.py
+      - name: Extract pinned board firmware
+        run: |
+          python3 device/scripts/extract-files.py
+          python3 device/scripts/extract-files.py --section Video --check
+          test -s device/.cache/firmware/qcom/sm8550/sheng/vpu30_4v.mbn
+      - name: Apply measured 12 GiB memory layout for iPadOS
+        run: |
+          python3 build-harness/scripts/prepare-sheng-12g-memory.py \
+            uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c \
+            --core UniXNU --device device --high-only --ipados27
       - name: Build iPadOS 27.0.1
         working-directory: device
         env:
           UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/package.sh --os 27 --uefi ../uefi-sheng --init-data
+      - name: Verify packaged iPadOS memory window
+        run: |
+          python3 - <<'PYTHON'
+          import struct
+          import subprocess
+          from pathlib import Path
+          target = Path("UniXNU/out/sheng/ipados-27.0.1-24A446/sheng_ipados27")
+          output = Path("ipados-memory.adt")
+          subprocess.run(["mcopy", "-i", str(target / "payload/payload.img"),
+                          "::/EFI/UniXNU/Payloads/kernel.macho.adt", str(output)], check=True)
+          window = b"darwinboot-memory-size".ljust(32, bytes(1)) + struct.pack("<IQ", 8, 0x280000000)
+          assert output.read_bytes().count(window) == 1, "Wrong iPadOS boot memory window"
+          print("Verified 10 GiB boot window in the packaged iPadOS ADT")
+          PYTHON
       - name: Encrypt failure diagnostics
         if: failure()
         shell: bash

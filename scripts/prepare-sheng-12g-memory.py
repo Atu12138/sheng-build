@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--core', type=Path, required=True)
     parser.add_argument('--device', type=Path, required=True)
     parser.add_argument('--high-only', action='store_true', help='keep the proven low map for a controlled boot comparison')
+    parser.add_argument('--ipados27', action='store_true', help='set the extended window for iPadOS 27')
     args = parser.parse_args()
     data = args.source.read_bytes()
     if hashlib.sha256(data).hexdigest() != SOURCE_SHA256:
@@ -80,7 +81,17 @@ def main():
         generator_text = replace(generator_text, 'to 8 GiB in 2 MiB steps', 'to 10 GiB in 2 MiB steps')
     board = args.device / 'board.toml'
     board_text = board.read_text()
-    if '"owned_memory_size" = "0x280000000"' not in board_text:
+    if args.ipados27:
+        section = '["os_overrides"."ipados-27.0.1-24A446"."kernel"."prelink"]'
+        adt = '''["os_overrides"."ipados-27.0.1-24A446"."payload"."adt"]
+"owned_memory_size" = "0x280000000"
+"owned_memory_excluded_ranges" = 64
+"owned_memory_outside_ranges" = 64
+"owned_memory_outside_reserved" = ["0xd0000000:0x10000"]
+
+'''
+        board_text = replace(board_text, section, adt + section)
+    elif '"owned_memory_size" = "0x280000000"' not in board_text:
         board_text = replace(board_text, '"owned_memory_size" = "0x180000000"', '"owned_memory_size" = "0x280000000"')
         board_text = replace(board_text, 'The 6 GiB bootstrap window spans the high bank.',
                              'The 10 GiB bootstrap window spans the measured high banks.')
